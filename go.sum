@@ -1,0 +1,4 @@
+github.com/RobertWHurst/navaros v1.0.0-beta-9 h1:iLFlr/gZPbLucbgyKCrg/kEEmbm+JECn/l575nW6xtk=
+github.com/RobertWHurst/navaros v1.0.0-beta-9/go.mod h1:dskJ4lqGoejOtTcwzD6BQHH+2KlX6SPi5JTO91ZsIHA=
+github.com/grafana/regexp v0.0.0-20221123153739-15dc172cd2db h1:7aN5cccjIqCLTzedH7MZzRZt5/lsAHch6Z3L2ZGn5FA=
+github.com/grafana/regexp v0.0.0-20221123153739-15dc172cd2db/go.mod h1:M5qHK+eWfAv8VR/265dIuEpL3fNfeC21tXXp9itM24A=
