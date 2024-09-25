@@ -26,6 +26,7 @@ type Router struct {
 	routeDescriptors   []*RouteDescriptor
 	firstHandlerNode   *HandlerNode
 	lastHandlerNode    *HandlerNode
+	Interplexer        *Interplexer
 	MessageDecoder     func([]byte) (*InboundMessage, error)
 	MessageEncoder     func(*OutboundMessage) ([]byte, error)
 }
@@ -178,11 +179,12 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	}
 	defer conn.CloseNow()
 
-	socket := NewSocket(conn, r.MessageDecoder, r.MessageEncoder)
+	socket := NewSocket(conn, r.Interplexer, r.MessageDecoder, r.MessageEncoder)
+	defer socket.Close()
+
 	for {
 		if !socket.handleNextMessageWithNode(r.firstHandlerNode) {
 			break
 		}
 	}
-	socket.Close()
 }

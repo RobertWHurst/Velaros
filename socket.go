@@ -4,26 +4,33 @@ import (
 	"context"
 
 	"github.com/coder/websocket"
+	"github.com/google/uuid"
 )
 
 type Socket struct {
-	connection       *websocket.Conn
 	id               string
+	connection       *websocket.Conn
+	interplexer      *Interplexer
 	messageDecoder   func([]byte) (*InboundMessage, error)
 	messageEncoder   func(*OutboundMessage) ([]byte, error)
 	associatedValues map[string]any
 }
 
-func NewSocket(conn *websocket.Conn, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) *Socket {
-	return &Socket{
+func NewSocket(conn *websocket.Conn, interplexer *Interplexer, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) *Socket {
+	s := &Socket{
+		id:               uuid.NewString(),
+		interplexer:      interplexer,
 		connection:       conn,
 		messageDecoder:   messageDecoder,
 		messageEncoder:   messageEncoder,
 		associatedValues: make(map[string]any),
 	}
+	interplexer.AddLocalSocket(s)
+	return s
 }
 
 func (s *Socket) Close() error {
+	s.interplexer.RemoveLocalSocket(s.id)
 	return s.connection.Close(websocket.StatusNormalClosure, "")
 }
 
@@ -41,6 +48,13 @@ func (s *Socket) Set(key string, value any) {
 
 func (s *Socket) Get(key string) any {
 	return s.associatedValues[key]
+}
+
+func (s *Socket) WithSocket(socketID string) (*SocketHandle, bool) {
+	if socketID == s.id {
+		panic("Cannot create a socket handle for the current socket. Try using send instead.")
+	}
+	return s.interplexer.WithSocket(socketID)
 }
 
 func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
