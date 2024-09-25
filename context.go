@@ -3,14 +3,16 @@ package scramjet
 import (
 	"errors"
 	"sync"
+
+	"github.com/google/uuid"
 )
 
 type Context struct {
 	parentContext *Context
 
-	Socket  *Socket
-	Message *InboundMessage
-	Id      string
+	id      string
+	socket  *Socket
+	message *InboundMessage
 	path    string
 	params  MessageParams
 
@@ -37,10 +39,14 @@ func NewContext(sender *Socket, message *InboundMessage, handlers ...any) *Conte
 func NewContextWithNode(socket *Socket, message *InboundMessage, firstHandlerNode *HandlerNode) *Context {
 	ctx := contextFromPool()
 
-	ctx.Socket = socket
-	ctx.Message = message
-	ctx.Id = message.ID
+	ctx.socket = socket
+	ctx.message = message
+	ctx.id = message.ID
 	ctx.path = message.Path
+
+	if ctx.id == "" {
+		ctx.id = uuid.NewString()
+	}
 
 	ctx.currentHandlerNode = firstHandlerNode
 
@@ -52,8 +58,8 @@ func NewSubContextWithNode(ctx *Context, firstHandlerNode *HandlerNode) *Context
 
 	subCtx.parentContext = ctx
 
-	subCtx.Socket = ctx.Socket
-	subCtx.Message = ctx.Message
+	subCtx.socket = ctx.socket
+	subCtx.message = ctx.message
 
 	subCtx.path = ctx.path
 	subCtx.params = ctx.params
@@ -89,8 +95,8 @@ func contextFromPool() *Context {
 
 	ctx.parentContext = nil
 
-	ctx.Socket = nil
-	ctx.Message = nil
+	ctx.socket = nil
+	ctx.message = nil
 
 	ctx.path = ""
 	for k := range ctx.params {
@@ -141,11 +147,11 @@ func (c *Context) Next() {
 }
 
 func (c *Context) SetOnSocket(key string, value any) {
-	c.Socket.Set(key, value)
+	c.socket.Set(key, value)
 }
 
 func (c *Context) GetFromSocket(key string) any {
-	return c.Socket.Get(key)
+	return c.socket.Get(key)
 }
 
 func (c *Context) Set(key string, value any) {
@@ -154,6 +160,14 @@ func (c *Context) Set(key string, value any) {
 
 func (c *Context) Get(key string) any {
 	return c.associatedValues[key]
+}
+
+func (c *Context) SocketID() string {
+	return c.socket.id
+}
+
+func (c *Context) MessageID() string {
+	return c.id
 }
 
 func (c *Context) Path() string {
@@ -179,9 +193,9 @@ func (c *Context) SetMessageDataMarshaller(marshaller func(from any) ([]byte, er
 	c.messageDataMarshaller = marshaller
 }
 
-func (c *Context) Reply(reply any) error {
-	return c.Socket.Send(&OutboundMessage{
-		ID:   c.Id,
-		Data: reply,
+func (c *Context) Send(data any) error {
+	return c.socket.Send(&OutboundMessage{
+		ID:   c.id,
+		Data: data,
 	})
 }

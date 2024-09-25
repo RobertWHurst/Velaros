@@ -1,14 +1,16 @@
 package scramjet
 
-import "encoding/json"
+import (
+	"bytes"
+)
 
 type InboundMessage struct {
-	ID   string
-	Path string
-	Data json.RawMessage
+	ID   string        `json:"id"`
+	Path string        `json:"path"`
+	Data *bytes.Buffer `json:"data"`
 }
 
 type OutboundMessage struct {
-	ID   string
-	Data any
+	ID   string `json:"id"`
+	Data any    `json:"data"`
 }

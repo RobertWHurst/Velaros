@@ -1,8 +1,9 @@
 package scramjet_test
 
 import (
-	"github.com/RobertWHurst/scramjet"
 	"testing"
+
+	"github.com/RobertWHurst/scramjet"
 )
 
 func TestMessageParamsGet(t *testing.T) {

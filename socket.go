@@ -8,16 +8,17 @@ import (
 
 type Socket struct {
 	connection       *websocket.Conn
-	MessageDecoder   func([]byte) (*InboundMessage, error)
-	MessageEncoder   func(*OutboundMessage) ([]byte, error)
+	id               string
+	messageDecoder   func([]byte) (*InboundMessage, error)
+	messageEncoder   func(*OutboundMessage) ([]byte, error)
 	associatedValues map[string]any
 }
 
-func NewSocket(connection *websocket.Conn, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) *Socket {
+func NewSocket(conn *websocket.Conn, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) *Socket {
 	return &Socket{
-		connection:       connection,
-		MessageDecoder:   messageDecoder,
-		MessageEncoder:   messageEncoder,
+		connection:       conn,
+		messageDecoder:   messageDecoder,
+		messageEncoder:   messageEncoder,
 		associatedValues: make(map[string]any),
 	}
 }
@@ -27,11 +28,11 @@ func (s *Socket) Close() error {
 }
 
 func (s *Socket) Send(message *OutboundMessage) error {
-	encodedMessage, err := s.MessageEncoder(message)
+	encodedMessage, err := s.messageEncoder(message)
 	if err != nil {
 		return err
 	}
-	return s.connection.Write(context.Background(), websocket.MessageText, encodedMessage)
+	return s.connection.Write(context.Background(), websocket.MessageBinary, encodedMessage)
 }
 
 func (s *Socket) Set(key string, value any) {
@@ -52,7 +53,7 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 		panic(err)
 	}
 
-	message, err := s.MessageDecoder(msg)
+	message, err := s.messageDecoder(msg)
 	if err != nil {
 		panic(err)
 	}
