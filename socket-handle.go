@@ -16,6 +16,9 @@ type SocketHandle struct {
 	remoteSocketID      string
 	remoteInterplexerID string
 	localInterplexer    *Interplexer
+
+	messageDecoder func([]byte) (*InboundMessage, error)
+	messageEncoder func(*OutboundMessage) ([]byte, error)
 }
 
 func (h *SocketHandle) Send(data any) error {
@@ -26,12 +29,25 @@ func (h *SocketHandle) Send(data any) error {
 		})
 	}
 
-	// TODO: Figure out how to deal with encoding data on the interplexer.
-	// Using the message encoder or decoder might not be a good idea as it
-	// could be different in different instances of router accross the interplexer
-	// network. The problem is that it would require either the end user define
-	// struct tags for a fixed interplexer encoder/decoder to use, or provide
-	// a way to define a custom encoder/decoder for the interplexer.
+	messageData, err := h.messageEncoder(&OutboundMessage{
+		ID:   h.id,
+		Data: data,
+	})
+	if err != nil {
+		return err
+	}
 
-	return h.localInterplexer.Connection.Dispatch(h.remoteInterplexerID, h.remoteSocketID, data)
+	return h.localInterplexer.Connection.Dispatch(h.remoteInterplexerID, h.remoteSocketID, messageData)
 }
+
+// func (h *SocketHandle) Request(data any) (any, error) {
+// 	if h.kind == SocketHandleKindLocal {
+// 		return h.localSocket.Request(&OutboundMessage{
+// 			ID:   h.id,
+// 			Data: data,
+// 		})
+// 	}
+
+// 	// TODO: Figure out how to do reply ids
+// 	err := h.localInterplexer.Connection.Dispatch(h.remoteInterplexerID, h.remoteSocketID, data)
+// }

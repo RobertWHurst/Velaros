@@ -54,7 +54,7 @@ func (s *Socket) WithSocket(socketID string) (*SocketHandle, bool) {
 	if socketID == s.id {
 		panic("Cannot create a socket handle for the current socket. Try using send instead.")
 	}
-	return s.interplexer.WithSocket(socketID)
+	return s.interplexer.WithSocket(socketID, s.messageDecoder, s.messageEncoder)
 }
 
 func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {

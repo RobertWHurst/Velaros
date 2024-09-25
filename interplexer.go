@@ -31,8 +31,17 @@ func NewInterplexer(connection InterplexerConnection) *Interplexer {
 			return false
 		}
 
-		// TODO: Send message to local socket
-		// TODO: Figure out how to do reply ids
+		inboundMessage, err := localSocket.messageDecoder(message)
+		if err != nil {
+			panic(err)
+		}
+
+		if err := localSocket.Send(&OutboundMessage{
+			ID:   inboundMessage.ID,
+			Data: inboundMessage.Data,
+		}); err != nil {
+			panic(err)
+		}
 
 		return true
 	}); err != nil {
@@ -70,7 +79,7 @@ func (i *Interplexer) RemoveLocalSocket(socketID string) {
 	i.mu.Unlock()
 }
 
-func (i *Interplexer) WithSocket(socketID string) (*SocketHandle, bool) {
+func (i *Interplexer) WithSocket(socketID string, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) (*SocketHandle, bool) {
 	i.mu.Lock()
 	localSocket, hasLocalSocket := i.LocalSockets[socketID]
 	interplexerID, hasRemoteSocket := i.RemoteInterplexerIDs[socketID]
@@ -93,5 +102,7 @@ func (i *Interplexer) WithSocket(socketID string) (*SocketHandle, bool) {
 		remoteSocketID:      socketID,
 		remoteInterplexerID: interplexerID,
 		localInterplexer:    i,
+		messageDecoder:      messageDecoder,
+		messageEncoder:      messageEncoder,
 	}, true
 }

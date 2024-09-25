@@ -199,3 +199,10 @@ func (c *Context) Send(data any) error {
 		Data: data,
 	})
 }
+
+// func (c *Context) Request(data any) (any, error) {
+// 	return c.socket.Request(&OutboundMessage{
+// 		ID:   c.id,
+// 		Data: data,
+// 	})
+// }
