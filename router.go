@@ -26,21 +26,21 @@ type Router struct {
 	routeDescriptors   []*RouteDescriptor
 	firstHandlerNode   *HandlerNode
 	lastHandlerNode    *HandlerNode
-	interplexer        *Interplexer
+	interplexer        *interplexer
 	MessageDecoder     func([]byte) (*InboundMessage, error)
 	MessageEncoder     func(*OutboundMessage) ([]byte, error)
 }
 
 func NewRouter() *Router {
 	return &Router{
-		interplexer:    NewInterplexer(),
+		interplexer:    newInterplexer(),
 		MessageEncoder: DefaultMessageEncoder,
 		MessageDecoder: DefaultMessageMetaDecoder,
 	}
 }
 
 func (r *Router) ConnectInterplexer(connection InterplexerConnection) error {
-	return r.interplexer.SetConnection(connection)
+	return r.interplexer.setConnection(connection)
 }
 
 func (r *Router) Middleware() navaros.HandlerFunc {
@@ -184,8 +184,8 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	}
 	defer conn.CloseNow()
 
-	socket := NewSocket(conn, r.interplexer, r.MessageDecoder, r.MessageEncoder)
-	defer socket.Close()
+	socket := newSocket(conn, r.interplexer, r.MessageDecoder, r.MessageEncoder)
+	defer socket.close()
 
 	for {
 		if !socket.handleNextMessageWithNode(r.firstHandlerNode) {

@@ -74,14 +74,6 @@ func TestRouterSimpleHandler(t *testing.T) {
 		t.Errorf("expected Hello Server, got %s", reqData.Msg)
 	}
 
-	if reply.ID == "" {
-		t.Errorf("expected id to be set")
-	}
-
-	if err := uuid.Validate(reply.ID); err != nil {
-		t.Errorf("expected valid uuid")
-	}
-
 	if reply.Data.Msg != "Hello World" {
 		t.Errorf("expected Hello World, got %s", reply.Data.Msg)
 	}

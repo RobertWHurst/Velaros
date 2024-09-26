@@ -8,38 +8,38 @@ import (
 	"github.com/google/uuid"
 )
 
-type Interplexer struct {
+type interplexer struct {
 	mu sync.Mutex
 
-	ID         string
-	Connection InterplexerConnection
+	id         string
+	connection InterplexerConnection
 
-	LocalSockets         map[string]*Socket
-	RemoteInterplexerIDs map[string]string
+	localSockets         map[string]*socket
+	remoteInterplexerIDs map[string]string
 }
 
-func NewInterplexer() *Interplexer {
-	return &Interplexer{
-		ID:                   uuid.NewString(),
-		LocalSockets:         map[string]*Socket{},
-		RemoteInterplexerIDs: map[string]string{},
+func newInterplexer() *interplexer {
+	return &interplexer{
+		id:                   uuid.NewString(),
+		localSockets:         map[string]*socket{},
+		remoteInterplexerIDs: map[string]string{},
 	}
 }
 
-func (i *Interplexer) SetConnection(connection InterplexerConnection) error {
+func (i *interplexer) setConnection(connection InterplexerConnection) error {
 	i.mu.Lock()
 	defer i.mu.Unlock()
 
-	if i.Connection != nil {
-		i.Connection.UnbindDispatch(i.ID)
-		i.Connection.UnbindSocketOpenAnnounce()
-		i.Connection.UnbindSocketCloseAnnounce()
-		for socketID := range i.LocalSockets {
-			i.Connection.AnnounceSocketClose(i.ID, socketID)
+	if i.connection != nil {
+		i.connection.UnbindDispatch(i.id)
+		i.connection.UnbindSocketOpenAnnounce()
+		i.connection.UnbindSocketCloseAnnounce()
+		for socketID := range i.localSockets {
+			i.connection.AnnounceSocketClose(i.id, socketID)
 		}
 	}
 
-	if err := connection.BindDispatch(i.ID, i.handleDispatch); err != nil {
+	if err := connection.BindDispatch(i.id, i.handleDispatch); err != nil {
 		return err
 	}
 
@@ -51,45 +51,45 @@ func (i *Interplexer) SetConnection(connection InterplexerConnection) error {
 		return err
 	}
 
-	for socketID := range i.LocalSockets {
-		if err := connection.AnnounceSocketOpen(i.ID, socketID); err != nil {
+	for socketID := range i.localSockets {
+		if err := connection.AnnounceSocketOpen(i.id, socketID); err != nil {
 			return err
 		}
 	}
 
-	i.Connection = connection
+	i.connection = connection
 
 	return nil
 }
 
-func (i *Interplexer) AddLocalSocket(socket *Socket) {
+func (i *interplexer) addLocalSocket(socket *socket) {
 	i.mu.Lock()
-	i.LocalSockets[socket.id] = socket
+	i.localSockets[socket.id] = socket
 	i.mu.Unlock()
 
-	if i.Connection != nil {
-		if err := i.Connection.AnnounceSocketOpen(i.ID, socket.id); err != nil {
+	if i.connection != nil {
+		if err := i.connection.AnnounceSocketOpen(i.id, socket.id); err != nil {
 			panic(err)
 		}
 	}
 }
 
-func (i *Interplexer) RemoveLocalSocket(socketID string) {
+func (i *interplexer) removeLocalSocket(socketID string) {
 	i.mu.Lock()
-	delete(i.LocalSockets, socketID)
+	delete(i.localSockets, socketID)
 	i.mu.Unlock()
 
-	if i.Connection != nil {
-		if err := i.Connection.AnnounceSocketClose(i.ID, socketID); err != nil {
+	if i.connection != nil {
+		if err := i.connection.AnnounceSocketClose(i.id, socketID); err != nil {
 			panic(err)
 		}
 	}
 }
 
-func (i *Interplexer) WithSocket(socketID string, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) (*SocketHandle, bool) {
+func (i *interplexer) withSocket(sourceSocketID, socketID string, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) (*SocketHandle, bool) {
 	i.mu.Lock()
-	localSocket, hasLocalSocket := i.LocalSockets[socketID]
-	interplexerID, hasRemoteSocket := i.RemoteInterplexerIDs[socketID]
+	localSocket, hasLocalSocket := i.localSockets[socketID]
+	interplexerID, hasRemoteSocket := i.remoteInterplexerIDs[socketID]
 	i.mu.Unlock()
 
 	if !hasLocalSocket && !hasRemoteSocket {
@@ -104,8 +104,8 @@ func (i *Interplexer) WithSocket(socketID string, messageDecoder func([]byte) (*
 	}
 
 	return &SocketHandle{
-		id:                  uuid.NewString(),
 		kind:                SocketHandleKindRemote,
+		sourceSocketID:      sourceSocketID,
 		remoteSocketID:      socketID,
 		remoteInterplexerID: interplexerID,
 		localInterplexer:    i,
@@ -114,9 +114,9 @@ func (i *Interplexer) WithSocket(socketID string, messageDecoder func([]byte) (*
 	}, true
 }
 
-func (i *Interplexer) handleDispatch(socketID string, message []byte) bool {
+func (i *interplexer) handleDispatch(socketID string, message []byte) bool {
 	i.mu.Lock()
-	localSocket, ok := i.LocalSockets[socketID]
+	localSocket, ok := i.localSockets[socketID]
 	i.mu.Unlock()
 
 	if !ok {
@@ -130,14 +130,14 @@ func (i *Interplexer) handleDispatch(socketID string, message []byte) bool {
 	return true
 }
 
-func (i *Interplexer) handleSocketOpenAnnounce(interplexerID string, socketID string) {
+func (i *interplexer) handleSocketOpenAnnounce(interplexerID string, socketID string) {
 	i.mu.Lock()
-	i.RemoteInterplexerIDs[socketID] = interplexerID
+	i.remoteInterplexerIDs[socketID] = interplexerID
 	i.mu.Unlock()
 }
 
-func (i *Interplexer) handleSocketCloseAnnounce(interplexerID string, socketID string) {
+func (i *interplexer) handleSocketCloseAnnounce(interplexerID string, socketID string) {
 	i.mu.Lock()
-	delete(i.RemoteInterplexerIDs, socketID)
+	delete(i.remoteInterplexerIDs, socketID)
 	i.mu.Unlock()
 }

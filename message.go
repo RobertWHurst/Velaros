@@ -7,6 +7,6 @@ type InboundMessage struct {
 }
 
 type OutboundMessage struct {
-	ID   string `json:"id"`
-	Data any    `json:"data"`
+	ID   string `json:"id,omitempty"`
+	Data any    `json:"data,omitempty"`
 }

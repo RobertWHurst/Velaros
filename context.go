@@ -3,6 +3,7 @@ package scramjet
 import (
 	"errors"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -11,7 +12,7 @@ type Context struct {
 	parentContext *Context
 
 	id      string
-	socket  *Socket
+	socket  *socket
 	message *InboundMessage
 	path    string
 	params  MessageParams
@@ -32,11 +33,11 @@ type Context struct {
 	messageDataMarshaller  func(from any) ([]byte, error)
 }
 
-func NewContext(sender *Socket, message *InboundMessage, handlers ...any) *Context {
+func NewContext(sender *socket, message *InboundMessage, handlers ...any) *Context {
 	return NewContextWithNode(sender, message, &HandlerNode{HandlersAndTransformers: handlers})
 }
 
-func NewContextWithNode(socket *Socket, message *InboundMessage, firstHandlerNode *HandlerNode) *Context {
+func NewContextWithNode(socket *socket, message *InboundMessage, firstHandlerNode *HandlerNode) *Context {
 	ctx := contextFromPool()
 
 	ctx.socket = socket
@@ -147,11 +148,11 @@ func (c *Context) Next() {
 }
 
 func (c *Context) SetOnSocket(key string, value any) {
-	c.socket.Set(key, value)
+	c.socket.set(key, value)
 }
 
 func (c *Context) GetFromSocket(key string) any {
-	return c.socket.Get(key)
+	return c.socket.get(key)
 }
 
 func (c *Context) Set(key string, value any) {
@@ -194,19 +195,42 @@ func (c *Context) SetMessageDataMarshaller(marshaller func(from any) ([]byte, er
 }
 
 func (c *Context) WithSocket(socketID string) (*SocketHandle, bool) {
-	return c.socket.WithSocket(socketID)
+	return c.socket.withSocket(socketID)
 }
 
 func (c *Context) Send(data any) error {
-	return c.socket.Send(&OutboundMessage{
+	return c.socket.send(&OutboundMessage{
+		Data: data,
+	})
+}
+
+func (c *Context) Reply(data any) error {
+	if c.id == "" {
+		return errors.New("cannot reply to a message without an ID")
+	}
+	return c.socket.send(&OutboundMessage{
 		ID:   c.id,
 		Data: data,
 	})
 }
 
-// func (c *Context) Request(data any) (any, error) {
-// 	return c.socket.Request(&OutboundMessage{
-// 		ID:   c.id,
-// 		Data: data,
-// 	})
-// }
+func (c *Context) Request(data any) (any, error) {
+	id := uuid.NewString()
+
+	responseMessageChan := make(chan *InboundMessage, 1)
+	c.socket.addInterceptor(id, func(message *InboundMessage) {
+		responseMessageChan <- message
+	})
+
+	c.socket.send(&OutboundMessage{
+		ID:   id,
+		Data: data,
+	})
+
+	select {
+	case responseMessage := <-responseMessageChan:
+		return responseMessage.Data, nil
+	case <-time.After(5 * time.Second):
+		return nil, errors.New("request timed out")
+	}
+}

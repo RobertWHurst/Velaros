@@ -7,34 +7,36 @@ import (
 	"github.com/google/uuid"
 )
 
-type Socket struct {
+type socket struct {
 	id               string
 	connection       *websocket.Conn
-	interplexer      *Interplexer
+	interplexer      *interplexer
+	interceptors     map[string]func(*InboundMessage)
 	messageDecoder   func([]byte) (*InboundMessage, error)
 	messageEncoder   func(*OutboundMessage) ([]byte, error)
 	associatedValues map[string]any
 }
 
-func NewSocket(conn *websocket.Conn, interplexer *Interplexer, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) *Socket {
-	s := &Socket{
+func newSocket(conn *websocket.Conn, interplexer *interplexer, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) *socket {
+	s := &socket{
 		id:               uuid.NewString(),
-		interplexer:      interplexer,
 		connection:       conn,
+		interplexer:      interplexer,
+		interceptors:     map[string]func(*InboundMessage){},
 		messageDecoder:   messageDecoder,
 		messageEncoder:   messageEncoder,
-		associatedValues: make(map[string]any),
+		associatedValues: map[string]any{},
 	}
-	interplexer.AddLocalSocket(s)
+	interplexer.addLocalSocket(s)
 	return s
 }
 
-func (s *Socket) Close() error {
-	s.interplexer.RemoveLocalSocket(s.id)
+func (s *socket) close() error {
+	s.interplexer.removeLocalSocket(s.id)
 	return s.connection.Close(websocket.StatusNormalClosure, "")
 }
 
-func (s *Socket) Send(message *OutboundMessage) error {
+func (s *socket) send(message *OutboundMessage) error {
 	encodedMessage, err := s.messageEncoder(message)
 	if err != nil {
 		return err
@@ -42,22 +44,22 @@ func (s *Socket) Send(message *OutboundMessage) error {
 	return s.connection.Write(context.Background(), websocket.MessageBinary, encodedMessage)
 }
 
-func (s *Socket) Set(key string, value any) {
+func (s *socket) set(key string, value any) {
 	s.associatedValues[key] = value
 }
 
-func (s *Socket) Get(key string) any {
+func (s *socket) get(key string) any {
 	return s.associatedValues[key]
 }
 
-func (s *Socket) WithSocket(socketID string) (*SocketHandle, bool) {
+func (s *socket) withSocket(socketID string) (*SocketHandle, bool) {
 	if socketID == s.id {
 		panic("Cannot create a socket handle for the current socket. Try using send instead.")
 	}
-	return s.interplexer.WithSocket(socketID, s.messageDecoder, s.messageEncoder)
+	return s.interplexer.withSocket(s.id, socketID, s.messageDecoder, s.messageEncoder)
 }
 
-func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
+func (s *socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	_, msg, err := s.connection.Read(context.Background())
 	if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
 		return false
@@ -71,8 +73,11 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	if err != nil {
 		panic(err)
 	}
-	if message.ID != "" {
-		// TODO(rh): Maybe skip if the message has no ID?
+
+	if interceptor, ok := s.interceptors[message.ID]; ok {
+		interceptor(message)
+		delete(s.interceptors, message.ID)
+		return true
 	}
 
 	ctx := NewContextWithNode(s, message, node)
@@ -81,4 +86,12 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	ctx.free()
 
 	return true
+}
+
+func (s *socket) addInterceptor(id string, interceptor func(*InboundMessage)) {
+	s.interceptors[id] = interceptor
+}
+
+func (s *socket) removeInterceptor(id string) {
+	delete(s.interceptors, id)
 }
