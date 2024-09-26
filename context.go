@@ -193,6 +193,10 @@ func (c *Context) SetMessageDataMarshaller(marshaller func(from any) ([]byte, er
 	c.messageDataMarshaller = marshaller
 }
 
+func (c *Context) WithSocket(socketID string) (*SocketHandle, bool) {
+	return c.socket.WithSocket(socketID)
+}
+
 func (c *Context) Send(data any) error {
 	return c.socket.Send(&OutboundMessage{
 		ID:   c.id,

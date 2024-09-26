@@ -19,7 +19,7 @@ func (c *Connection) AnnounceSocketClose(interplexerID string, socketID string) 
 }
 
 func (c *Connection) BindSocketCloseAnnounce(handler func(interplexerID string, socketID string)) error {
-	socketCloseAnnounceSub, err := c.NatsConnection.Subscribe(namespace("socket.close"), func(msg *nats.Msg) {
+	sub, err := c.NatsConnection.Subscribe(namespace("socket.close"), func(msg *nats.Msg) {
 		socketIDs := &SocketIDs{}
 		if err := json.Unmarshal(msg.Data, socketIDs); err != nil {
 			panic(err)
@@ -30,14 +30,13 @@ func (c *Connection) BindSocketCloseAnnounce(handler func(interplexerID string, 
 		return err
 	}
 
-	unbinders, ok := c.unbindSocketCloseAnnounce["socket.close"]
-	if !ok {
-		unbinders = []func(){}
+	c.unbindSocketCloseAnnounce = func() {
+		sub.Unsubscribe()
 	}
-	unbinders = append(unbinders, func() {
-		socketCloseAnnounceSub.Unsubscribe()
-	})
-	c.unbindSocketCloseAnnounce["socket.close"] = unbinders
 
 	return nil
+}
+
+func (c *Connection) UnbindSocketCloseAnnounce() {
+	c.unbindSocketCloseAnnounce()
 }

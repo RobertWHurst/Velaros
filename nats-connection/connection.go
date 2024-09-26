@@ -7,17 +7,17 @@ import (
 
 type Connection struct {
 	NatsConnection            *nats.Conn
-	unbindDispatch            map[string][]func()
-	unbindSocketOpenAnnounce  map[string][]func()
-	unbindSocketCloseAnnounce map[string][]func()
+	unbindDispatch            func()
+	unbindSocketOpenAnnounce  func()
+	unbindSocketCloseAnnounce func()
 }
 
-func NewConnection(conn *nats.Conn) scramjet.InterplexerConnection {
+func New(conn *nats.Conn) scramjet.InterplexerConnection {
 	return &Connection{
 		NatsConnection:            conn,
-		unbindDispatch:            map[string][]func(){},
-		unbindSocketOpenAnnounce:  map[string][]func(){},
-		unbindSocketCloseAnnounce: map[string][]func(){},
+		unbindDispatch:            func() {},
+		unbindSocketOpenAnnounce:  func() {},
+		unbindSocketCloseAnnounce: func() {},
 	}
 }
 
