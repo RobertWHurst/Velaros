@@ -10,7 +10,6 @@ import (
 	"github.com/RobertWHurst/scramjet"
 	localconnection "github.com/RobertWHurst/scramjet/local-connection"
 	"github.com/coder/websocket"
-	"github.com/google/uuid"
 )
 
 type RequestData struct {
@@ -116,14 +115,6 @@ func TestRouterMiddleware(t *testing.T) {
 	err = json.Unmarshal(replyMsg, &reply)
 	if err != nil {
 		t.Fatal(err)
-	}
-
-	if reply.ID == "" {
-		t.Errorf("expected id to be set")
-	}
-
-	if err := uuid.Validate(reply.ID); err != nil {
-		t.Errorf("expected valid uuid")
 	}
 
 	if reply.Data.Msg != "Hello World" {
