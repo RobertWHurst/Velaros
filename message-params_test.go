@@ -1,28 +1,28 @@
-package scramjet_test
+package velaros_test
 
 import (
 	"testing"
 
-	"github.com/RobertWHurst/scramjet"
+	"github.com/RobertWHurst/velaros"
 )
 
 func TestMessageParamsGet(t *testing.T) {
 	cases := []struct {
 		message       string
-		params        scramjet.MessageParams
+		params        velaros.MessageParams
 		key           string
 		expectedValue string
 	}{
 		{"should return the value for a key that exists",
-			scramjet.MessageParams{"Content-Type": "application/json"},
+			velaros.MessageParams{"Content-Type": "application/json"},
 			"Content-Type", "application/json",
 		},
 		{"should return the value for a key that exists with different casing",
-			scramjet.MessageParams{"Content-Type": "application/json"},
+			velaros.MessageParams{"Content-Type": "application/json"},
 			"content-type", "application/json",
 		},
 		{"should return an empty string for a key that does not exist",
-			scramjet.MessageParams{"Content-Type": "application/json"},
+			velaros.MessageParams{"Content-Type": "application/json"},
 			"Accept", "",
 		},
 	}

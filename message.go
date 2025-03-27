@@ -1,4 +1,4 @@
-package scramjet
+package velaros
 
 type InboundMessage struct {
 	ID   string `json:"id"`

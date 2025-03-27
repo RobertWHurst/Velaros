@@ -1,4 +1,4 @@
-package scramjet_test
+package velaros_test
 
 import (
 	"context"
@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/RobertWHurst/scramjet"
-	localconnection "github.com/RobertWHurst/scramjet/local-connection"
+	"github.com/RobertWHurst/velaros"
+	localconnection "github.com/RobertWHurst/velaros/local-connection"
 	"github.com/coder/websocket"
 )
 
@@ -30,7 +30,7 @@ type Reply struct {
 }
 
 func TestRouterSimpleHandler(t *testing.T) {
-	router := scramjet.NewRouter()
+	router := velaros.NewRouter()
 	server := httptest.NewServer(router)
 
 	reqData := RequestData{
@@ -40,7 +40,7 @@ func TestRouterSimpleHandler(t *testing.T) {
 		Msg: "Hello World",
 	}
 
-	router.Bind("/a/b/c", func(ctx *scramjet.Context) {
+	router.Bind("/a/b/c", func(ctx *velaros.Context) {
 		ctx.UnmarshalMessageData(&reqData)
 		ctx.Send(resData)
 	})
@@ -79,15 +79,15 @@ func TestRouterSimpleHandler(t *testing.T) {
 }
 
 func TestRouterMiddleware(t *testing.T) {
-	router := scramjet.NewRouter()
+	router := velaros.NewRouter()
 	server := httptest.NewServer(router)
 
-	router.Use(func(ctx *scramjet.Context) {
+	router.Use(func(ctx *velaros.Context) {
 		ctx.Set("message", "Hello World")
 		ctx.Next()
 	})
 
-	router.Bind("/a/b/c", func(ctx *scramjet.Context) {
+	router.Bind("/a/b/c", func(ctx *velaros.Context) {
 		ctx.Send(ResponseData{
 			Msg: ctx.Get("message").(string),
 		})
@@ -123,8 +123,8 @@ func TestRouterMiddleware(t *testing.T) {
 }
 
 func TestRouterInterplexer(t *testing.T) {
-	router1 := scramjet.NewRouter()
-	router2 := scramjet.NewRouter()
+	router1 := velaros.NewRouter()
+	router2 := velaros.NewRouter()
 
 	localConnection := localconnection.New()
 
@@ -135,11 +135,11 @@ func TestRouterInterplexer(t *testing.T) {
 	server2 := httptest.NewServer(router2)
 
 	var socketID string
-	router1.Bind("/attach", func(ctx *scramjet.Context) {
+	router1.Bind("/attach", func(ctx *velaros.Context) {
 		socketID = ctx.SocketID()
 	})
 
-	router2.Bind("/handle-message", func(ctx *scramjet.Context) {
+	router2.Bind("/handle-message", func(ctx *velaros.Context) {
 		if socketID == "" {
 			t.Fatal("expected socketID to be set")
 		}

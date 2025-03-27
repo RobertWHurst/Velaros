@@ -1,4 +1,4 @@
-package scramjet
+package velaros
 
 import (
 	"errors"

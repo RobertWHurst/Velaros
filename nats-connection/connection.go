@@ -1,7 +1,7 @@
 package natsconnection
 
 import (
-	"github.com/RobertWHurst/scramjet"
+	"github.com/RobertWHurst/velaros"
 	"github.com/nats-io/nats.go"
 )
 
@@ -12,7 +12,7 @@ type Connection struct {
 	unbindSocketCloseAnnounce func() error
 }
 
-func New(conn *nats.Conn) scramjet.InterplexerConnection {
+func New(conn *nats.Conn) velaros.InterplexerConnection {
 	return &Connection{
 		NatsConnection:            conn,
 		unbindDispatch:            func() error { return nil },

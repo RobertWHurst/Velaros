@@ -1,4 +1,4 @@
-package scramjet
+package velaros
 
 type InterplexerConnection interface {
 	AnnounceSocketOpen(interplexerID string, socketID string) error

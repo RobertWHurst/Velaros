@@ -6,13 +6,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/RobertWHurst/scramjet"
+	"github.com/RobertWHurst/velaros"
 )
 
 func main() {
-	router := scramjet.NewRouter()
+	router := velaros.NewRouter()
 
-	router.Bind("/time/start", func(ctx *scramjet.Context) {
+	router.Bind("/time/start", func(ctx *velaros.Context) {
 		fmt.Println("Starting time")
 
 		ctx.SetOnSocket("timeState", &TimeState{
@@ -37,7 +37,7 @@ func main() {
 		}
 	})
 
-	router.Bind("/time/stop", func(ctx *scramjet.Context) {
+	router.Bind("/time/stop", func(ctx *velaros.Context) {
 		fmt.Println("Stopping time")
 		timeState := ctx.GetFromSocket("timeState").(*TimeState)
 		timeState.Stop()

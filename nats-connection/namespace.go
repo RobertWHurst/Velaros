@@ -5,7 +5,7 @@ import (
 	"unicode"
 )
 
-const NatsSubjectNamespace = "scramjet"
+const NatsSubjectNamespace = "velaros"
 
 func namespace(strValues ...string) string {
 	namespaceChunks := []string{NatsSubjectNamespace}
