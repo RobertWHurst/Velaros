@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+</head>
+<body>
+  <script>
+    const ws = new WebSocket("ws://localhost:8167")
+
+    ws.addEventListener('open', () => {
+      console.log("Requesting time")
+      ws.send(`{ "path": "/time/start" }`)
+
+      setTimeout(() => {
+        console.log("Stopping time")
+        ws.send(`{ "path": "/time/stop" }`)
+      }, 10000)
+    })
+
+    ws.addEventListener("message", (event) => {
+      console.log(event.data)
+    })
+
+  </script>
+</body>
+</html>

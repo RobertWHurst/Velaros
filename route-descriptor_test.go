@@ -4,16 +4,16 @@ import (
 	"encoding/json"
 	"testing"
 
-	"github.com/RobertWHurst/navaros"
+	"github.com/RobertWHurst/scramjet"
 )
 
 func TestRouteDescriptorMarshalJSON(t *testing.T) {
-	pattern, err := navaros.NewPattern("/a/b/c")
+	pattern, err := scramjet.NewPattern("/a/b/c")
 	if err != nil {
 		t.Errorf("Failed to create pattern: %s", err.Error())
 	}
 
-	r := &navaros.RouteDescriptor{
+	r := &scramjet.RouteDescriptor{
 		Pattern: pattern,
 	}
 
@@ -39,7 +39,7 @@ func TestRouteDescriptorMarshalJSON(t *testing.T) {
 func TestRouteDescriptorUnmarshalJSON(t *testing.T) {
 	jsonData := []byte(`{"Pattern":"/a/b/c"}`)
 
-	r := &navaros.RouteDescriptor{}
+	r := &scramjet.RouteDescriptor{}
 	if err := r.UnmarshalJSON(jsonData); err != nil {
 		t.Errorf("Failed to unmarshal route descriptor: %s", err.Error())
 	}

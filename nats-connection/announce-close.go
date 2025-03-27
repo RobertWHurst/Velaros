@@ -14,8 +14,7 @@ func (c *Connection) AnnounceSocketClose(interplexerID string, socketID string) 
 	if err != nil {
 		return err
 	}
-	c.NatsConnection.Publish(namespace("socket.close"), messageBytes)
-	return nil
+	return c.NatsConnection.Publish(namespace("socket.close"), messageBytes)
 }
 
 func (c *Connection) BindSocketCloseAnnounce(handler func(interplexerID string, socketID string)) error {
@@ -30,13 +29,13 @@ func (c *Connection) BindSocketCloseAnnounce(handler func(interplexerID string, 
 		return err
 	}
 
-	c.unbindSocketCloseAnnounce = func() {
-		sub.Unsubscribe()
+	c.unbindSocketCloseAnnounce = func() error {
+		return sub.Unsubscribe()
 	}
 
 	return nil
 }
 
-func (c *Connection) UnbindSocketCloseAnnounce() {
-	c.unbindSocketCloseAnnounce()
+func (c *Connection) UnbindSocketCloseAnnounce() error {
+	return c.unbindSocketCloseAnnounce()
 }

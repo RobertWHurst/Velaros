@@ -180,9 +180,10 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 		OriginPatterns: []string{"*"},
 	})
 	if err != nil {
+		conn.Close(websocket.StatusInternalError, "failed to accept websocket connection")
 		panic(err)
 	}
-	defer conn.CloseNow()
+	defer conn.Close(websocket.StatusNormalClosure, "")
 
 	socket := newSocket(conn, r.interplexer, r.MessageDecoder, r.MessageEncoder)
 	defer socket.close()

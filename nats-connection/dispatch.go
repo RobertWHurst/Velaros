@@ -36,13 +36,13 @@ func (c *Connection) BindDispatch(interplexerID string, handler func(socketID st
 		return err
 	}
 
-	c.unbindDispatch = func() {
-		sub.Unsubscribe()
+	c.unbindDispatch = func() error {
+		return sub.Unsubscribe()
 	}
 
 	return nil
 }
 
-func (c *Connection) UnbindDispatch(interplexerID string) {
-	c.unbindDispatch()
+func (c *Connection) UnbindDispatch(interplexerID string) error {
+	return c.unbindDispatch()
 }

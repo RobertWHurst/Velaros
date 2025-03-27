@@ -222,10 +222,12 @@ func (c *Context) Request(data any) (any, error) {
 		responseMessageChan <- message
 	})
 
-	c.socket.send(&OutboundMessage{
+	if err := c.socket.send(&OutboundMessage{
 		ID:   id,
 		Data: data,
-	})
+	}); err != nil {
+		return nil, err
+	}
 
 	select {
 	case responseMessage := <-responseMessageChan:

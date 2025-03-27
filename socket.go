@@ -2,6 +2,9 @@ package scramjet
 
 import (
 	"context"
+	"fmt"
+	"io"
+	"sync"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
@@ -11,6 +14,7 @@ type socket struct {
 	id               string
 	connection       *websocket.Conn
 	interplexer      *interplexer
+	interceptorsMx   sync.Mutex
 	interceptors     map[string]func(*InboundMessage)
 	messageDecoder   func([]byte) (*InboundMessage, error)
 	messageEncoder   func(*OutboundMessage) ([]byte, error)
@@ -33,7 +37,7 @@ func newSocket(conn *websocket.Conn, interplexer *interplexer, messageDecoder fu
 
 func (s *socket) close() error {
 	s.interplexer.removeLocalSocket(s.id)
-	return s.connection.Close(websocket.StatusNormalClosure, "")
+	return nil
 }
 
 func (s *socket) send(message *OutboundMessage) error {
@@ -41,7 +45,7 @@ func (s *socket) send(message *OutboundMessage) error {
 	if err != nil {
 		return err
 	}
-	return s.connection.Write(context.Background(), websocket.MessageBinary, encodedMessage)
+	return s.connection.Write(context.Background(), websocket.MessageText, encodedMessage)
 }
 
 func (s *socket) set(key string, value any) {
@@ -61,29 +65,35 @@ func (s *socket) withSocket(socketID string) (*SocketHandle, bool) {
 
 func (s *socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	_, msg, err := s.connection.Read(context.Background())
-	if websocket.CloseStatus(err) == websocket.StatusNormalClosure {
+	if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
+		websocket.CloseStatus(err) == websocket.StatusGoingAway ||
+		err == io.EOF {
 		return false
 	}
-
 	if err != nil {
-		panic(err)
+		panic(fmt.Errorf("error reading socket message: %w", err))
 	}
 
-	message, err := s.messageDecoder(msg)
-	if err != nil {
-		panic(err)
-	}
+	go func() {
+		message, err := s.messageDecoder(msg)
+		if err != nil {
+			panic(err)
+		}
 
-	if interceptor, ok := s.interceptors[message.ID]; ok {
-		interceptor(message)
-		delete(s.interceptors, message.ID)
-		return true
-	}
+		// TODO: Move to a method and use defer to unlock
+		s.interceptorsMx.Lock()
+		if interceptor, ok := s.interceptors[message.ID]; ok {
+			interceptor(message)
+			delete(s.interceptors, message.ID)
+			return
+		}
+		s.interceptorsMx.Unlock()
 
-	ctx := NewContextWithNode(s, message, node)
+		ctx := NewContextWithNode(s, message, node)
 
-	ctx.Next()
-	ctx.free()
+		ctx.Next()
+		ctx.free()
+	}()
 
 	return true
 }

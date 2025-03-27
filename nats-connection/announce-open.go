@@ -14,8 +14,7 @@ func (c *Connection) AnnounceSocketOpen(interplexerID string, socketID string) e
 	if err != nil {
 		return err
 	}
-	c.NatsConnection.Publish(namespace("socket.open"), messageBytes)
-	return nil
+	return c.NatsConnection.Publish(namespace("socket.open"), messageBytes)
 }
 
 func (c *Connection) BindSocketOpenAnnounce(handler func(interplexerID string, socketID string)) error {
@@ -30,13 +29,13 @@ func (c *Connection) BindSocketOpenAnnounce(handler func(interplexerID string, s
 		return err
 	}
 
-	c.unbindSocketOpenAnnounce = func() {
-		sub.Unsubscribe()
+	c.unbindSocketOpenAnnounce = func() error {
+		return sub.Unsubscribe()
 	}
 
 	return nil
 }
 
-func (c *Connection) UnbindSocketOpenAnnounce() {
-	c.unbindSocketOpenAnnounce()
+func (c *Connection) UnbindSocketOpenAnnounce() error {
+	return c.unbindSocketOpenAnnounce()
 }

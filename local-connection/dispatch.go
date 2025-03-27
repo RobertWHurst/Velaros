@@ -14,6 +14,7 @@ func (c *Connection) BindDispatch(interplexerID string, handler func(socketID st
 	return nil
 }
 
-func (c *Connection) UnbindDispatch(interplexerID string) {
+func (c *Connection) UnbindDispatch(interplexerID string) error {
 	delete(c.dispatchHandlers, interplexerID)
+	return nil
 }

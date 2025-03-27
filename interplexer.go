@@ -2,6 +2,7 @@ package scramjet
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	"github.com/coder/websocket"
@@ -31,9 +32,15 @@ func (i *interplexer) setConnection(connection InterplexerConnection) error {
 	defer i.mu.Unlock()
 
 	if i.connection != nil {
-		i.connection.UnbindDispatch(i.id)
-		i.connection.UnbindSocketOpenAnnounce()
-		i.connection.UnbindSocketCloseAnnounce()
+		if err := i.connection.UnbindDispatch(i.id); err != nil {
+			fmt.Printf("error unbinding previous interplexer dispatch: %v\n", err)
+		}
+		if err := i.connection.UnbindSocketOpenAnnounce(); err != nil {
+			fmt.Printf("error unbinding previous interplexer socket open announce: %v\n", err)
+		}
+		if err := i.connection.UnbindSocketCloseAnnounce(); err != nil {
+			fmt.Printf("error unbinding previous interplexer socket close announce: %v\n", err)
+		}
 		for socketID := range i.localSockets {
 			i.connection.AnnounceSocketClose(i.id, socketID)
 		}

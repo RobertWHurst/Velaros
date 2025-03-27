@@ -12,6 +12,7 @@ func (c *Connection) BindSocketCloseAnnounce(handler func(interplexerID string, 
 	return nil
 }
 
-func (c *Connection) UnbindSocketCloseAnnounce() {
+func (c *Connection) UnbindSocketCloseAnnounce() error {
 	c.announceCloseHandlers = []func(interplexerID string, socketID string){}
+	return nil
 }
