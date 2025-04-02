@@ -11,7 +11,10 @@ import (
 	"github.com/RobertWHurst/navaros"
 )
 
-func DefaultMessageMetaDecoder(msg []byte) (*InboundMessage, error) {
+type MessageDecoder func([]byte) (*InboundMessage, error)
+type MessageEncoder func(*OutboundMessage) ([]byte, error)
+
+func DefaultMessageDecoder(msg []byte) (*InboundMessage, error) {
 	message := &InboundMessage{}
 	err := json.Unmarshal(msg, message)
 	return message, err
@@ -27,8 +30,8 @@ type Router struct {
 	firstHandlerNode   *HandlerNode
 	lastHandlerNode    *HandlerNode
 	interplexer        *interplexer
-	MessageDecoder     func([]byte) (*InboundMessage, error)
-	MessageEncoder     func(*OutboundMessage) ([]byte, error)
+	MessageDecoder     MessageDecoder
+	MessageEncoder     MessageEncoder
 }
 
 var _ RouterHandler = &Router{}
@@ -37,7 +40,7 @@ func NewRouter() *Router {
 	return &Router{
 		interplexer:    newInterplexer(),
 		MessageEncoder: DefaultMessageEncoder,
-		MessageDecoder: DefaultMessageMetaDecoder,
+		MessageDecoder: DefaultMessageDecoder,
 	}
 }
 
