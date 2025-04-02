@@ -31,12 +31,18 @@ type Router struct {
 	MessageEncoder     func(*OutboundMessage) ([]byte, error)
 }
 
+var _ RouterHandler = &Router{}
+
 func NewRouter() *Router {
 	return &Router{
 		interplexer:    newInterplexer(),
 		MessageEncoder: DefaultMessageEncoder,
 		MessageDecoder: DefaultMessageMetaDecoder,
 	}
+}
+
+func (r *Router) RouteDescriptors() []*RouteDescriptor {
+	return r.routeDescriptors
 }
 
 func (r *Router) ConnectInterplexer(connection InterplexerConnection) error {
