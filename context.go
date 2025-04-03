@@ -61,6 +61,7 @@ func NewSubContextWithNode(ctx *Context, firstHandlerNode *HandlerNode) *Context
 
 	subCtx.socket = ctx.socket
 	subCtx.message = ctx.message
+	subCtx.id = ctx.id
 
 	subCtx.path = ctx.path
 	subCtx.params = ctx.params
