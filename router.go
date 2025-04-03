@@ -194,7 +194,7 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	socket := newSocket(conn, r.interplexer, r.MessageDecoder, r.MessageEncoder)
+	socket := NewSocket(&websocketConn{conn: conn}, r.interplexer, r.MessageDecoder, r.MessageEncoder)
 	defer socket.close()
 
 	for {

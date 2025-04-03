@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/coder/websocket"
 	"github.com/google/uuid"
 )
 
@@ -15,14 +14,14 @@ type interplexer struct {
 	id         string
 	connection InterplexerConnection
 
-	localSockets         map[string]*socket
+	localSockets         map[string]*Socket
 	remoteInterplexerIDs map[string]string
 }
 
 func newInterplexer() *interplexer {
 	return &interplexer{
 		id:                   uuid.NewString(),
-		localSockets:         map[string]*socket{},
+		localSockets:         map[string]*Socket{},
 		remoteInterplexerIDs: map[string]string{},
 	}
 }
@@ -69,7 +68,7 @@ func (i *interplexer) setConnection(connection InterplexerConnection) error {
 	return nil
 }
 
-func (i *interplexer) addLocalSocket(socket *socket) {
+func (i *interplexer) addLocalSocket(socket *Socket) {
 	i.mu.Lock()
 	i.localSockets[socket.id] = socket
 	i.mu.Unlock()
@@ -121,7 +120,7 @@ func (i *interplexer) withSocket(sourceSocketID, socketID string, messageDecoder
 	}, true
 }
 
-func (i *interplexer) handleDispatch(socketID string, message []byte) bool {
+func (i *interplexer) handleDispatch(socketID string, messageData []byte) bool {
 	i.mu.Lock()
 	localSocket, ok := i.localSockets[socketID]
 	i.mu.Unlock()
@@ -130,7 +129,7 @@ func (i *interplexer) handleDispatch(socketID string, message []byte) bool {
 		return false
 	}
 
-	if err := localSocket.connection.Write(context.Background(), websocket.MessageBinary, message); err != nil {
+	if err := localSocket.connection.Write(context.Background(), messageData); err != nil {
 		panic(err)
 	}
 

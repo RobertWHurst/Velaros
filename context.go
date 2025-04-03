@@ -12,7 +12,7 @@ type Context struct {
 	parentContext *Context
 
 	id      string
-	socket  *socket
+	socket  *Socket
 	message *InboundMessage
 	path    string
 	params  MessageParams
@@ -33,11 +33,11 @@ type Context struct {
 	messageDataMarshaller  func(from any) ([]byte, error)
 }
 
-func NewContext(sender *socket, message *InboundMessage, handlers ...any) *Context {
+func NewContext(sender *Socket, message *InboundMessage, handlers ...any) *Context {
 	return NewContextWithNode(sender, message, &HandlerNode{HandlersAndTransformers: handlers})
 }
 
-func NewContextWithNode(socket *socket, message *InboundMessage, firstHandlerNode *HandlerNode) *Context {
+func NewContextWithNode(socket *Socket, message *InboundMessage, firstHandlerNode *HandlerNode) *Context {
 	ctx := contextFromPool()
 
 	ctx.socket = socket

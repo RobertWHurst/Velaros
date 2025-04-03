@@ -10,9 +10,9 @@ import (
 	"github.com/google/uuid"
 )
 
-type socket struct {
+type Socket struct {
 	id               string
-	connection       *websocket.Conn
+	connection       SocketConnection
 	interplexer      *interplexer
 	interceptorsMx   sync.Mutex
 	interceptors     map[string]func(*InboundMessage)
@@ -21,8 +21,8 @@ type socket struct {
 	associatedValues map[string]any
 }
 
-func newSocket(conn *websocket.Conn, interplexer *interplexer, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) *socket {
-	s := &socket{
+func NewSocket(conn SocketConnection, interplexer *interplexer, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) *Socket {
+	s := &Socket{
 		id:               uuid.NewString(),
 		connection:       conn,
 		interplexer:      interplexer,
@@ -35,36 +35,36 @@ func newSocket(conn *websocket.Conn, interplexer *interplexer, messageDecoder fu
 	return s
 }
 
-func (s *socket) close() error {
+func (s *Socket) close() error {
 	s.interplexer.removeLocalSocket(s.id)
 	return nil
 }
 
-func (s *socket) send(message *OutboundMessage) error {
+func (s *Socket) send(message *OutboundMessage) error {
 	encodedMessage, err := s.messageEncoder(message)
 	if err != nil {
 		return err
 	}
-	return s.connection.Write(context.Background(), websocket.MessageText, encodedMessage)
+	return s.connection.Write(context.Background(), encodedMessage)
 }
 
-func (s *socket) set(key string, value any) {
+func (s *Socket) set(key string, value any) {
 	s.associatedValues[key] = value
 }
 
-func (s *socket) get(key string) any {
+func (s *Socket) get(key string) any {
 	return s.associatedValues[key]
 }
 
-func (s *socket) withSocket(socketID string) (*SocketHandle, bool) {
+func (s *Socket) withSocket(socketID string) (*SocketHandle, bool) {
 	if socketID == s.id {
 		panic("Cannot create a socket handle for the current socket. Try using send instead.")
 	}
 	return s.interplexer.withSocket(s.id, socketID, s.messageDecoder, s.messageEncoder)
 }
 
-func (s *socket) handleNextMessageWithNode(node *HandlerNode) bool {
-	_, msg, err := s.connection.Read(context.Background())
+func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
+	msg, err := s.connection.Read(context.Background())
 	if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
 		websocket.CloseStatus(err) == websocket.StatusGoingAway ||
 		err == io.EOF {
@@ -98,10 +98,10 @@ func (s *socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	return true
 }
 
-func (s *socket) addInterceptor(id string, interceptor func(*InboundMessage)) {
+func (s *Socket) addInterceptor(id string, interceptor func(*InboundMessage)) {
 	s.interceptors[id] = interceptor
 }
 
-func (s *socket) removeInterceptor(id string) {
+func (s *Socket) removeInterceptor(id string) {
 	delete(s.interceptors, id)
 }

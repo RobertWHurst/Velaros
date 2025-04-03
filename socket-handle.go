@@ -19,7 +19,7 @@ type SocketHandle struct {
 
 	sourceSocketID string
 
-	localSocket *socket
+	localSocket *Socket
 
 	remoteSocketID      string
 	remoteInterplexerID string
