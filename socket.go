@@ -31,12 +31,16 @@ func NewSocket(conn SocketConnection, interplexer *interplexer, messageDecoder f
 		messageEncoder:   messageEncoder,
 		associatedValues: map[string]any{},
 	}
-	interplexer.addLocalSocket(s)
+	if interplexer != nil {
+		interplexer.addLocalSocket(s)
+	}
 	return s
 }
 
 func (s *Socket) close() error {
-	s.interplexer.removeLocalSocket(s.id)
+	if s.interplexer != nil {
+		s.interplexer.removeLocalSocket(s.id)
+	}
 	return nil
 }
 
@@ -59,6 +63,9 @@ func (s *Socket) get(key string) any {
 func (s *Socket) withSocket(socketID string) (*SocketHandle, bool) {
 	if socketID == s.id {
 		panic("Cannot create a socket handle for the current socket. Try using send instead.")
+	}
+	if s.interplexer == nil {
+		panic("Cannot use withSocket without interplexer")
 	}
 	return s.interplexer.withSocket(s.id, socketID, s.messageDecoder, s.messageEncoder)
 }
