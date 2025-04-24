@@ -30,8 +30,8 @@ type Router struct {
 	firstHandlerNode   *HandlerNode
 	lastHandlerNode    *HandlerNode
 	interplexer        *interplexer
-	MessageDecoder     MessageDecoder
-	MessageEncoder     MessageEncoder
+	messageDecoder     MessageDecoder
+	messageEncoder     MessageEncoder
 }
 
 var _ RouterHandler = &Router{}
@@ -39,13 +39,27 @@ var _ RouterHandler = &Router{}
 func NewRouter() *Router {
 	return &Router{
 		interplexer:    newInterplexer(),
-		MessageEncoder: DefaultMessageEncoder,
-		MessageDecoder: DefaultMessageDecoder,
+		messageEncoder: DefaultMessageEncoder,
+		messageDecoder: DefaultMessageDecoder,
 	}
 }
 
 func (r *Router) RouteDescriptors() []*RouteDescriptor {
 	return r.routeDescriptors
+}
+
+func (r *Router) SetMessageEncoder(encoder MessageEncoder) {
+	r.messageEncoder = encoder
+	if r.interplexer != nil {
+		r.interplexer.messageEncoder = encoder
+	}
+}
+
+func (r *Router) SetMessageDecoder(decoder MessageDecoder) {
+	r.messageDecoder = decoder
+	if r.interplexer != nil {
+		r.interplexer.messageDecoder = decoder
+	}
 }
 
 func (r *Router) ConnectInterplexer(connection InterplexerConnection) error {
@@ -194,7 +208,7 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	socket := NewSocket(&websocketConn{conn: conn}, r.interplexer, r.MessageDecoder, r.MessageEncoder)
+	socket := NewSocket(&websocketConn{conn: conn}, r.interplexer, nil, r.messageDecoder, r.messageEncoder)
 	defer socket.close()
 
 	for {

@@ -1,11 +1,22 @@
 package velaros
 
 import (
-	"errors"
+	"context"
+	"fmt"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+// SocketHandle provides an interface for interacting with a socket
+// through methods like Send and Request
+type SocketHandle interface {
+	// Send sends a message to the socket
+	Send(data any) error
+
+	// Request sends a message to the socket and waits for a response
+	Request(data any) (any, error)
+}
 
 type SocketHandleKind int
 
@@ -14,10 +25,9 @@ const (
 	SocketHandleKindRemote
 )
 
-type SocketHandle struct {
+// socketHandle is the internal implementation of the SocketHandle interface
+type socketHandle struct {
 	kind SocketHandleKind
-
-	sourceSocketID string
 
 	localSocket *Socket
 
@@ -29,7 +39,10 @@ type SocketHandle struct {
 	messageEncoder func(*OutboundMessage) ([]byte, error)
 }
 
-func (h *SocketHandle) Send(data any) error {
+// Ensure socketHandle implements SocketHandle
+var _ SocketHandle = &socketHandle{}
+
+func (h *socketHandle) Send(data any) error {
 	if h.kind == SocketHandleKindLocal {
 		return h.localSocket.send(&OutboundMessage{
 			Data: data,
@@ -46,39 +59,65 @@ func (h *SocketHandle) Send(data any) error {
 	return h.localInterplexer.connection.Dispatch(h.remoteInterplexerID, h.remoteSocketID, messageData)
 }
 
-func (h *SocketHandle) Request(data any) (any, error) {
+func (h *socketHandle) RequestWithContext(ctx context.Context, data any) (any, error) {
 	id := uuid.NewString()
-	outboundMessage := &OutboundMessage{
-		ID:   id,
-		Data: data,
-	}
-
 	responseMessageChan := make(chan *InboundMessage, 1)
-	sourceSocket := h.localInterplexer.localSockets[h.sourceSocketID]
-	if sourceSocket == nil {
-		return nil, errors.New("source socket not found")
-	}
-	sourceSocket.addInterceptor(id, func(message *InboundMessage) {
-		responseMessageChan <- message
-	})
 
 	if h.kind == SocketHandleKindLocal {
-		h.localSocket.send(outboundMessage)
+		h.localSocket.addInterceptor(id, func(message *InboundMessage, _ []byte) {
+			responseMessageChan <- message
+		})
+		defer h.localSocket.removeInterceptor(id)
+
+		if err := h.localSocket.send(&OutboundMessage{
+			ID:   id,
+			Data: data,
+		}); err != nil {
+			return nil, err
+		}
+
 	} else {
-		messageData, err := h.messageEncoder(outboundMessage)
+		deadline, ok := ctx.Deadline()
+		timeout := DefaultRequestTimeout
+		if ok {
+			timeout = time.Until(deadline)
+			if timeout < 1 {
+				timeout = 1
+			}
+		}
+
+		h.localInterplexer.addRemoteInterceptor(h.remoteInterplexerID, h.remoteSocketID, id, timeout, func(message *InboundMessage, _ []byte) {
+			responseMessageChan <- message
+		})
+		defer h.localInterplexer.removeRemoteInterceptor(h.remoteInterplexerID, h.remoteSocketID, id)
+
+		messageData, err := h.messageEncoder(&OutboundMessage{
+			ID:   id,
+			Data: data,
+		})
 		if err != nil {
 			return nil, err
 		}
+
 		if err := h.localInterplexer.connection.Dispatch(h.remoteInterplexerID, h.remoteSocketID, messageData); err != nil {
 			return nil, err
 		}
 	}
 
 	select {
-	case message := <-responseMessageChan:
-		return message.Data, nil
-	case <-time.After(5 * time.Second):
-		sourceSocket.removeInterceptor(id)
-		return nil, errors.New("request timed out")
+	case responseMessage := <-responseMessageChan:
+		return responseMessage.Data, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("request cancelled: %w", ctx.Err())
 	}
+}
+
+func (h *socketHandle) RequestWithTimeout(data any, timeout time.Duration) (any, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return h.RequestWithContext(ctx, data)
+}
+
+func (h *socketHandle) Request(data any) (any, error) {
+	return h.RequestWithTimeout(data, DefaultRequestTimeout)
 }

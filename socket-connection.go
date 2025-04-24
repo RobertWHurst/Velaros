@@ -24,7 +24,7 @@ func (c *websocketConn) Write(ctx context.Context, messageData []byte) error {
 
 func (c *websocketConn) Read(ctx context.Context) ([]byte, error) {
 	messageKind, messageData, err := c.conn.Read(ctx)
-	if messageKind == websocket.MessageText {
+	if err == nil && messageKind != websocket.MessageText {
 		return nil, fmt.Errorf("Message type %v is not supported", messageKind)
 	}
 	return messageData, err

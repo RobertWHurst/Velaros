@@ -14,19 +14,21 @@ type Socket struct {
 	id               string
 	connection       SocketConnection
 	interplexer      *interplexer
+	forwarder        Forwarder
 	interceptorsMx   sync.Mutex
-	interceptors     map[string]func(*InboundMessage)
+	interceptors     map[string]func(*InboundMessage, []byte)
 	messageDecoder   func([]byte) (*InboundMessage, error)
 	messageEncoder   func(*OutboundMessage) ([]byte, error)
 	associatedValues map[string]any
 }
 
-func NewSocket(conn SocketConnection, interplexer *interplexer, messageDecoder func([]byte) (*InboundMessage, error), messageEncoder func(*OutboundMessage) ([]byte, error)) *Socket {
+func NewSocket(conn SocketConnection, interplexer *interplexer, forwarder Forwarder, messageDecoder MessageDecoder, messageEncoder MessageEncoder) *Socket {
 	s := &Socket{
 		id:               uuid.NewString(),
 		connection:       conn,
 		interplexer:      interplexer,
-		interceptors:     map[string]func(*InboundMessage){},
+		forwarder:        forwarder,
+		interceptors:     map[string]func(*InboundMessage, []byte){},
 		messageDecoder:   messageDecoder,
 		messageEncoder:   messageEncoder,
 		associatedValues: map[string]any{},
@@ -53,25 +55,35 @@ func (s *Socket) send(message *OutboundMessage) error {
 }
 
 func (s *Socket) set(key string, value any) {
+	if s.forwarder != nil {
+		s.forwarder.SetOnSocket(s.id, key, value)
+		return
+	}
 	s.associatedValues[key] = value
 }
 
 func (s *Socket) get(key string) any {
+	if s.forwarder != nil {
+		return s.forwarder.GetFromSocket(s.id, key)
+	}
 	return s.associatedValues[key]
 }
 
-func (s *Socket) withSocket(socketID string) (*SocketHandle, bool) {
+func (s *Socket) withSocket(socketID string) (SocketHandle, bool) {
 	if socketID == s.id {
 		panic("Cannot create a socket handle for the current socket. Try using send instead.")
+	}
+	if s.forwarder != nil {
+		return s.forwarder.WithSocket(socketID, s.messageDecoder, s.messageEncoder)
 	}
 	if s.interplexer == nil {
 		panic("Cannot use withSocket without interplexer")
 	}
-	return s.interplexer.withSocket(s.id, socketID, s.messageDecoder, s.messageEncoder)
+	return s.interplexer.withSocket(socketID, s.messageDecoder, s.messageEncoder)
 }
 
 func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
-	msg, err := s.connection.Read(context.Background())
+	messageData, err := s.connection.Read(context.Background())
 	if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
 		websocket.CloseStatus(err) == websocket.StatusGoingAway ||
 		err == io.EOF {
@@ -82,19 +94,14 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	}
 
 	go func() {
-		message, err := s.messageDecoder(msg)
+		message, err := s.messageDecoder(messageData)
 		if err != nil {
 			panic(err)
 		}
 
-		// TODO: Move to a method and use defer to unlock
-		s.interceptorsMx.Lock()
-		if interceptor, ok := s.interceptors[message.ID]; ok {
-			interceptor(message)
-			delete(s.interceptors, message.ID)
+		if s.maybeIntercept(message.ID, message, messageData) {
 			return
 		}
-		s.interceptorsMx.Unlock()
 
 		ctx := NewContextWithNode(s, message, node)
 
@@ -105,10 +112,29 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	return true
 }
 
-func (s *Socket) addInterceptor(id string, interceptor func(*InboundMessage)) {
+func (s *Socket) maybeIntercept(messageId string, message *InboundMessage, messageData []byte) bool {
+	s.interceptorsMx.Lock()
+	defer s.interceptorsMx.Unlock()
+
+	if interceptor, ok := s.interceptors[messageId]; ok {
+		interceptor(message, messageData)
+		delete(s.interceptors, messageId)
+		return true
+	}
+
+	return false
+}
+
+func (s *Socket) addInterceptor(id string, interceptor func(*InboundMessage, []byte)) {
+	s.interceptorsMx.Lock()
+	defer s.interceptorsMx.Unlock()
+
 	s.interceptors[id] = interceptor
 }
 
 func (s *Socket) removeInterceptor(id string) {
+	s.interceptorsMx.Lock()
+	defer s.interceptorsMx.Unlock()
+
 	delete(s.interceptors, id)
 }

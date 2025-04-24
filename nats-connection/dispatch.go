@@ -22,15 +22,13 @@ func (c *Connection) Dispatch(interplexerID string, socketID string, message []b
 	return c.NatsConnection.Publish(namespace("socket.dispatch", interplexerID), messageBytes)
 }
 
-func (c *Connection) BindDispatch(interplexerID string, handler func(socketID string, message []byte) bool) error {
+func (c *Connection) BindDispatch(interplexerID string, handler func(socketID string, message []byte)) error {
 	sub, err := c.NatsConnection.Subscribe(namespace("socket.dispatch", interplexerID), func(msg *nats.Msg) {
 		dispatchMessage := &DispatchMessage{}
 		if err := json.Unmarshal(msg.Data, dispatchMessage); err != nil {
 			panic(err)
 		}
-		if !handler(dispatchMessage.SocketID, dispatchMessage.Message) {
-			return
-		}
+		handler(dispatchMessage.SocketID, dispatchMessage.Message)
 	})
 	if err != nil {
 		return err

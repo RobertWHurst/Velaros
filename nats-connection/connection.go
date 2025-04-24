@@ -7,17 +7,23 @@ import (
 
 type Connection struct {
 	NatsConnection            *nats.Conn
-	unbindDispatch            func() error
 	unbindSocketOpenAnnounce  func() error
 	unbindSocketCloseAnnounce func() error
+	unbindDispatch            func() error
+	unbindIntercept           func() error
+	unbindIgnore              func() error
+	unbindIntercepted         func() error
 }
 
 func New(conn *nats.Conn) velaros.InterplexerConnection {
 	return &Connection{
 		NatsConnection:            conn,
-		unbindDispatch:            func() error { return nil },
 		unbindSocketOpenAnnounce:  func() error { return nil },
 		unbindSocketCloseAnnounce: func() error { return nil },
+		unbindDispatch:            func() error { return nil },
+		unbindIntercept:           func() error { return nil },
+		unbindIgnore:              func() error { return nil },
+		unbindIntercepted:         func() error { return nil },
 	}
 }
 

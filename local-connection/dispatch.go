@@ -9,7 +9,7 @@ func (c *Connection) Dispatch(interplexerID string, socketID string, message []b
 	return nil
 }
 
-func (c *Connection) BindDispatch(interplexerID string, handler func(socketID string, message []byte) bool) error {
+func (c *Connection) BindDispatch(interplexerID string, handler func(socketID string, message []byte)) error {
 	c.dispatchHandlers[interplexerID] = handler
 	return nil
 }

@@ -1,12 +1,16 @@
 package velaros
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/google/uuid"
 )
+
+const DefaultRequestTimeout = 5 * time.Second
 
 type Context struct {
 	parentContext *Context
@@ -31,7 +35,12 @@ type Context struct {
 
 	messageDataUnmarshaler func(into any) error
 	messageDataMarshaller  func(from any) ([]byte, error)
+
+	deadline     *time.Time
+	doneHandlers []func()
 }
+
+var _ context.Context = &Context{}
 
 func NewContext(sender *Socket, message *InboundMessage, handlers ...any) *Context {
 	return NewContextWithNode(sender, message, &HandlerNode{HandlersAndTransformers: handlers})
@@ -180,6 +189,10 @@ func (c *Context) Params() MessageParams {
 	return c.params
 }
 
+func (c *Context) Data() any {
+	return c.message.Data
+}
+
 func (c *Context) UnmarshalMessageData(into any) error {
 	if c.messageDataUnmarshaler == nil {
 		return errors.New("no message unmarshaller set. use SetMessageDataUnmarshaler or add message parser middleware")
@@ -195,7 +208,7 @@ func (c *Context) SetMessageDataMarshaller(marshaller func(from any) ([]byte, er
 	c.messageDataMarshaller = marshaller
 }
 
-func (c *Context) WithSocket(socketID string) (*SocketHandle, bool) {
+func (c *Context) WithSocket(socketID string) (SocketHandle, bool) {
 	return c.socket.withSocket(socketID)
 }
 
@@ -215,11 +228,11 @@ func (c *Context) Reply(data any) error {
 	})
 }
 
-func (c *Context) Request(data any) (any, error) {
+func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error) {
 	id := uuid.NewString()
 
 	responseMessageChan := make(chan *InboundMessage, 1)
-	c.socket.addInterceptor(id, func(message *InboundMessage) {
+	c.socket.addInterceptor(id, func(message *InboundMessage, _ []byte) {
 		responseMessageChan <- message
 	})
 
@@ -233,7 +246,47 @@ func (c *Context) Request(data any) (any, error) {
 	select {
 	case responseMessage := <-responseMessageChan:
 		return responseMessage.Data, nil
-	case <-time.After(5 * time.Second):
-		return nil, errors.New("request timed out")
+	case <-ctx.Done():
+		return nil, fmt.Errorf("request cancelled: %w", ctx.Err())
 	}
+}
+
+func (c *Context) RequestWithTimeout(data any, timeout time.Duration) (any, error) {
+	ctx, cancel := context.WithTimeout(c, timeout)
+	defer cancel()
+	return c.RequestWithContext(ctx, data)
+}
+
+func (c *Context) Request(data any) (any, error) {
+	return c.RequestWithTimeout(data, DefaultRequestTimeout)
+}
+
+// Deadline returns the deadline of the request. Deadline is part of the go
+// context.Context interface.
+func (c *Context) Deadline() (time.Time, bool) {
+	ok := c.deadline != nil
+	deadline := time.Time{}
+	if ok {
+		deadline = *c.deadline
+	}
+	return deadline, ok
+}
+
+// Done added for compatibility with go's context.Context. Alias for
+// UntilFinish(). Done is part of the go context.Context interface.
+func (c *Context) Done() <-chan struct{} {
+	doneChan := make(chan struct{}, 1)
+	c.doneHandlers = append(c.doneHandlers, func() {
+		doneChan <- struct{}{}
+	})
+	return doneChan
+}
+
+func (c *Context) Err() error {
+	return c.FinalError
+}
+
+// Value is a noop for compatibility with go's context.Context.
+func (c *Context) Value(any) any {
+	return nil
 }
