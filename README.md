@@ -11,7 +11,7 @@ Velaros implements the standard `http.Handler` interface, so it works seamlessly
 
 - 🚀 **High Performance** - Context pooling and efficient message routing
 - 🔄 **Bidirectional** - Full duplex communication with Send, Reply, Request, and RequestInto patterns
-- 🎯 **Powerful Patterns** - Flexible routing with parameters, wildcards, regex constraints, and modifiers (?, +, *)
+- 🎯 **Powerful Patterns** - Flexible routing with parameters, wildcards, regex constraints, and modifiers
 - 🔌 **Middleware** - Composable middleware for authentication, logging, and more
 - 📦 **Type Detection** - Automatic text/binary message type handling
 - ⏱️ **Timeout Control** - Request timeouts and context cancellation for server→client requests
