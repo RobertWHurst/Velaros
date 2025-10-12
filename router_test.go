@@ -462,7 +462,9 @@ func TestRouterUseOpen(t *testing.T) {
 		if value != "test-value" {
 			t.Errorf("expected connectedAt to be 'test-value', got %v", value)
 		}
-		ctx.Send(testMessage{Msg: "ok"})
+		if err := ctx.Send(testMessage{Msg: "ok"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
@@ -614,7 +616,9 @@ func TestRouterMultipleUseOpen(t *testing.T) {
 		if _, ok := ctx.GetFromSocket("second"); !ok {
 			t.Error("expected second handler to have set value")
 		}
-		ctx.Send(map[string]string{"status": "ok"})
+		if err := ctx.Send(map[string]string{"status": "ok"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
 	})
 
 	ctx := context.Background()
@@ -677,13 +681,17 @@ func TestContextCloseStopsMessageLoop(t *testing.T) {
 
 	router.Bind("/first", func(ctx *velaros.Context) {
 		messagesReceived++
-		ctx.Send(testMessage{Msg: "first"})
+		if err := ctx.Send(testMessage{Msg: "first"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
 		ctx.Close()
 	})
 
 	router.Bind("/second", func(ctx *velaros.Context) {
 		messagesReceived++
-		ctx.Send(testMessage{Msg: "second"})
+		if err := ctx.Send(testMessage{Msg: "second"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
