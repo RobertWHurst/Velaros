@@ -41,7 +41,10 @@ func writeMessage(t *testing.T, conn *websocket.Conn, ctx context.Context, id, p
 	if data != nil {
 		msg["msg"] = data.(testMessage).Msg
 	}
-	msgBytes, _ := json.Marshal(msg)
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
 	if err := conn.Write(ctx, websocket.MessageText, msgBytes); err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +191,10 @@ func TestRouterRequest(t *testing.T) {
 		"id":   reqID,
 		"data": testMessage{Msg: "Pong"},
 	}
-	replyBytes, _ := json.Marshal(reply)
+	replyBytes, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatalf("marshal reply failed: %v", err)
+	}
 	if err := conn.Write(ctx, websocket.MessageText, replyBytes); err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +241,10 @@ func TestRouterRequestInto(t *testing.T) {
 		"id":   reqID,
 		"data": testMessage{Msg: "Pong"},
 	}
-	replyBytes, _ := json.Marshal(reply)
+	replyBytes, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatalf("marshal reply failed: %v", err)
+	}
 	if err := conn.Write(ctx, websocket.MessageText, replyBytes); err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +288,10 @@ func TestRouterRequestWithTimeout(t *testing.T) {
 		"id":   reqID,
 		"data": testMessage{Msg: "Too late"},
 	}
-	replyBytes, _ := json.Marshal(reply)
+	replyBytes, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatalf("marshal reply failed: %v", err)
+	}
 	conn.Write(ctx, websocket.MessageText, replyBytes)
 
 	_, response := readMessage(t, conn, ctx)
@@ -320,7 +332,10 @@ func TestRouterRequestIntoWithTimeout(t *testing.T) {
 		"id":   reqID,
 		"data": testMessage{Msg: "Too late"},
 	}
-	replyBytes, _ := json.Marshal(reply)
+	replyBytes, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatalf("marshal reply failed: %v", err)
+	}
 	conn.Write(ctx, websocket.MessageText, replyBytes)
 
 	_, response := readMessage(t, conn, ctx)
@@ -361,7 +376,10 @@ func TestRouterRequestWithContext(t *testing.T) {
 		"id":   reqID,
 		"data": testMessage{Msg: "Too late"},
 	}
-	replyBytes, _ := json.Marshal(reply)
+	replyBytes, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatalf("marshal reply failed: %v", err)
+	}
 	conn.Write(ctx, websocket.MessageText, replyBytes)
 
 	_, response := readMessage(t, conn, ctx)
@@ -403,7 +421,10 @@ func TestRouterRequestIntoWithContext(t *testing.T) {
 		"id":   reqID,
 		"data": testMessage{Msg: "Too late"},
 	}
-	replyBytes, _ := json.Marshal(reply)
+	replyBytes, err := json.Marshal(reply)
+	if err != nil {
+		t.Fatalf("marshal reply failed: %v", err)
+	}
 	conn.Write(ctx, websocket.MessageText, replyBytes)
 
 	_, response := readMessage(t, conn, ctx)
