@@ -2,10 +2,12 @@ package velaros
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"sync"
+	"time"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
@@ -19,7 +21,12 @@ type socket struct {
 	interceptors       map[string]chan *InboundMessage
 	associatedValuesMx sync.Mutex
 	associatedValues   map[string]any
+	closedMx           sync.Mutex
+	closed             bool
+	doneChan           chan struct{}
 }
+
+var _ context.Context = &socket{}
 
 func newSocket(requestHeaders http.Header, conn *websocket.Conn) *socket {
 	s := &socket{
@@ -28,12 +35,46 @@ func newSocket(requestHeaders http.Header, conn *websocket.Conn) *socket {
 		connection:       conn,
 		interceptors:     map[string]chan *InboundMessage{},
 		associatedValues: map[string]any{},
+		doneChan:         make(chan struct{}),
 	}
 	return s
 }
 
-func (s *socket) close() error {
+func (s *socket) Deadline() (time.Time, bool) {
+	return time.Time{}, false
+}
+
+func (s *socket) Done() <-chan struct{} {
+	return s.doneChan
+}
+
+func (s *socket) Err() error {
+	s.closedMx.Lock()
+	defer s.closedMx.Unlock()
+	if s.closed {
+		return context.Canceled
+	}
 	return nil
+}
+
+func (s *socket) Value(key any) any {
+	return nil
+}
+
+func (s *socket) close() {
+	s.closedMx.Lock()
+	defer s.closedMx.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
+	close(s.doneChan)
+}
+
+func (s *socket) isClosed() bool {
+	s.closedMx.Lock()
+	defer s.closedMx.Unlock()
+	return s.closed
 }
 
 func (s *socket) send(messageType websocket.MessageType, data []byte) error {
@@ -64,13 +105,12 @@ func (s *socket) mustGet(key string) any {
 }
 
 func (s *socket) handleNextMessageWithNode(node *HandlerNode) bool {
-	msgType, msg, err := s.connection.Read(context.Background())
-	if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
-		websocket.CloseStatus(err) == websocket.StatusGoingAway ||
-		err == io.EOF {
-		return false
-	}
+	msgType, msg, err := s.connection.Read(s)
 	if err != nil {
+		closeStatus := websocket.CloseStatus(err)
+		if closeStatus != -1 || err == io.EOF || errors.Is(err, context.Canceled) {
+			return false
+		}
 		panic(fmt.Errorf("error reading socket message: %w", err))
 	}
 

@@ -141,6 +141,7 @@ func (r *Router) bind(bindType BindType, isPublic bool, path string, handlers ..
 	}
 
 	nextHandlerNode := &HandlerNode{
+		BindType: bindType,
 		Pattern:  pattern,
 		Handlers: handlers,
 	}

@@ -17,7 +17,10 @@ func (c *Context) next() {
 	// context with the current context's state.
 	defer c.tryUpdateParent()
 
-	if c.Error != nil {
+	// For BindClose handlers, we don't want to check if the socket is closed
+	// since they're meant to run during the close process
+	isCloseHandler := c.currentHandlerNode != nil && c.currentHandlerNode.BindType == BindTypeBindClose
+	if c.Error != nil || (!isCloseHandler && c.socket.isClosed()) {
 		return
 	}
 

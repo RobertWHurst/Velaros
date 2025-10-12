@@ -613,3 +613,61 @@ func TestRouterMultipleBindOpen(t *testing.T) {
 		t.Error("expected second BindOpen handler to be called")
 	}
 }
+
+func TestContextClose(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	closeChan := make(chan struct{})
+
+	router.Bind("/close-me", func(ctx *velaros.Context) {
+		ctx.Close()
+	})
+
+	router.BindClose(func(ctx *velaros.Context) {
+		close(closeChan)
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "", "/close-me", nil)
+
+	select {
+	case <-closeChan:
+	case <-time.After(10 * time.Second):
+		t.Error("expected BindClose handler to be called after ctx.Close()")
+	}
+}
+
+func TestContextCloseStopsMessageLoop(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	messagesReceived := 0
+
+	router.Bind("/first", func(ctx *velaros.Context) {
+		messagesReceived++
+		ctx.Send(testMessage{Msg: "first"})
+		ctx.Close()
+	})
+
+	router.Bind("/second", func(ctx *velaros.Context) {
+		messagesReceived++
+		ctx.Send(testMessage{Msg: "second"})
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "", "/first", nil)
+	readMessage(t, conn, ctx)
+
+	writeMessage(t, conn, ctx, "", "/second", nil)
+
+	time.Sleep(50 * time.Millisecond)
+
+	if messagesReceived != 1 {
+		t.Errorf("expected only 1 message to be received, got %d", messagesReceived)
+	}
+}

@@ -35,10 +35,9 @@ type Context struct {
 	associatedValues map[string]any
 
 	messageUnmarshaler func(message *InboundMessage, into any) error
-	messageMarshaller  func(message *OutboundMessage) ([]byte, error)
+	messageMarshaller func(message *OutboundMessage) ([]byte, error)
 
-	deadline     *time.Time
-	doneHandlers []func()
+	deadline *time.Time
 }
 
 var _ context.Context = &Context{}
@@ -339,6 +338,10 @@ func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any
 	}
 }
 
+func (c *Context) Close() {
+	c.socket.close()
+}
+
 func (c *Context) unmarshalInboundMessage(message *InboundMessage, into any) error {
 	if c.messageUnmarshaler == nil {
 		return errors.New("no message unmarshaller set. use SetMessageUnmarshaler or add message parser middleware")
@@ -364,18 +367,17 @@ func (c *Context) Deadline() (time.Time, bool) {
 	return deadline, ok
 }
 
-// Done added for compatibility with go's context.Context. Alias for
-// UntilFinish(). Done is part of the go context.Context interface.
+// Done returns a channel that closes when the socket connection is closed.
+// Done is part of the go context.Context interface.
 func (c *Context) Done() <-chan struct{} {
-	doneChan := make(chan struct{}, 1)
-	c.doneHandlers = append(c.doneHandlers, func() {
-		doneChan <- struct{}{}
-	})
-	return doneChan
+	return c.socket.Done()
 }
 
 func (c *Context) Err() error {
-	return c.FinalError
+	if c.Error != nil {
+		return c.Error
+	}
+	return c.socket.Err()
 }
 
 // Value is a noop for compatibility with go's context.Context.

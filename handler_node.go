@@ -1,6 +1,7 @@
 package velaros
 
 type HandlerNode struct {
+	BindType BindType
 	Pattern  *Pattern
 	Handlers []any
 	Next     *HandlerNode
