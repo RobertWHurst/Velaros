@@ -292,7 +292,9 @@ func TestRouterRequestWithTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal reply failed: %v", err)
 	}
-	conn.Write(ctx, websocket.MessageText, replyBytes)
+	if err := conn.Write(ctx, websocket.MessageText, replyBytes); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
 
 	_, response := readMessage(t, conn, ctx)
 	if response.Msg != "Timed out" {
@@ -336,7 +338,9 @@ func TestRouterRequestIntoWithTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal reply failed: %v", err)
 	}
-	conn.Write(ctx, websocket.MessageText, replyBytes)
+	if err := conn.Write(ctx, websocket.MessageText, replyBytes); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
 
 	_, response := readMessage(t, conn, ctx)
 	if response.Msg != "Timed out" {
@@ -380,7 +384,9 @@ func TestRouterRequestWithContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal reply failed: %v", err)
 	}
-	conn.Write(ctx, websocket.MessageText, replyBytes)
+	if err := conn.Write(ctx, websocket.MessageText, replyBytes); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
 
 	_, response := readMessage(t, conn, ctx)
 	if response.Msg != "Cancelled" {
@@ -425,7 +431,9 @@ func TestRouterRequestIntoWithContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshal reply failed: %v", err)
 	}
-	conn.Write(ctx, websocket.MessageText, replyBytes)
+	if err := conn.Write(ctx, websocket.MessageText, replyBytes); err != nil {
+		t.Fatalf("write failed: %v", err)
+	}
 
 	_, response := readMessage(t, conn, ctx)
 	if response.Msg != "Cancelled" {
