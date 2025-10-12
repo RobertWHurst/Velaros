@@ -4,86 +4,67 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"sync"
 
 	"github.com/coder/websocket"
 	"github.com/google/uuid"
 )
 
-type Socket struct {
-	id               string
-	connection       SocketConnection
-	interplexer      *interplexer
-	forwarder        Forwarder
-	interceptorsMx   sync.Mutex
-	interceptors     map[string]func(*InboundMessage, []byte)
-	messageDecoder   func([]byte) (*InboundMessage, error)
-	messageEncoder   func(*OutboundMessage) ([]byte, error)
-	associatedValues map[string]any
+type socket struct {
+	id                 string
+	requestHeaders     http.Header
+	connection         *websocket.Conn
+	interceptorsMx     sync.Mutex
+	interceptors       map[string]chan *InboundMessage
+	associatedValuesMx sync.Mutex
+	associatedValues   map[string]any
 }
 
-func NewSocket(conn SocketConnection, interplexer *interplexer, forwarder Forwarder, messageDecoder MessageDecoder, messageEncoder MessageEncoder) *Socket {
-	s := &Socket{
+func newSocket(requestHeaders http.Header, conn *websocket.Conn) *socket {
+	s := &socket{
 		id:               uuid.NewString(),
+		requestHeaders:   requestHeaders,
 		connection:       conn,
-		interplexer:      interplexer,
-		forwarder:        forwarder,
-		interceptors:     map[string]func(*InboundMessage, []byte){},
-		messageDecoder:   messageDecoder,
-		messageEncoder:   messageEncoder,
+		interceptors:     map[string]chan *InboundMessage{},
 		associatedValues: map[string]any{},
-	}
-	if interplexer != nil {
-		interplexer.addLocalSocket(s)
 	}
 	return s
 }
 
-func (s *Socket) close() error {
-	if s.interplexer != nil {
-		s.interplexer.removeLocalSocket(s.id)
-	}
+func (s *socket) close() error {
 	return nil
 }
 
-func (s *Socket) send(message *OutboundMessage) error {
-	encodedMessage, err := s.messageEncoder(message)
-	if err != nil {
-		return err
-	}
-	return s.connection.Write(context.Background(), encodedMessage)
+func (s *socket) send(messageType websocket.MessageType, data []byte) error {
+	return s.connection.Write(context.Background(), messageType, data)
 }
 
-func (s *Socket) set(key string, value any) {
-	if s.forwarder != nil {
-		s.forwarder.SetOnSocket(s.id, key, value)
-		return
-	}
+func (s *socket) set(key string, value any) {
+	s.associatedValuesMx.Lock()
 	s.associatedValues[key] = value
+	s.associatedValuesMx.Unlock()
 }
 
-func (s *Socket) get(key string) any {
-	if s.forwarder != nil {
-		return s.forwarder.GetFromSocket(s.id, key)
-	}
-	return s.associatedValues[key]
+func (s *socket) get(key string) (any, bool) {
+	s.associatedValuesMx.Lock()
+	v, ok := s.associatedValues[key]
+	s.associatedValuesMx.Unlock()
+	return v, ok
 }
 
-func (s *Socket) withSocket(socketID string) (SocketHandle, bool) {
-	if socketID == s.id {
-		panic("Cannot create a socket handle for the current socket. Try using send instead.")
+func (s *socket) mustGet(key string) any {
+	s.associatedValuesMx.Lock()
+	v, ok := s.associatedValues[key]
+	s.associatedValuesMx.Unlock()
+	if !ok {
+		panic(fmt.Sprintf("key %s not found", key))
 	}
-	if s.forwarder != nil {
-		return s.forwarder.WithSocket(socketID, s.messageDecoder, s.messageEncoder)
-	}
-	if s.interplexer == nil {
-		panic("Cannot use withSocket without interplexer")
-	}
-	return s.interplexer.withSocket(socketID, s.messageDecoder, s.messageEncoder)
+	return v
 }
 
-func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
-	messageData, err := s.connection.Read(context.Background())
+func (s *socket) handleNextMessageWithNode(node *HandlerNode) bool {
+	msgType, msg, err := s.connection.Read(context.Background())
 	if websocket.CloseStatus(err) == websocket.StatusNormalClosure ||
 		websocket.CloseStatus(err) == websocket.StatusGoingAway ||
 		err == io.EOF {
@@ -94,16 +75,9 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	}
 
 	go func() {
-		message, err := s.messageDecoder(messageData)
-		if err != nil {
-			panic(err)
-		}
-
-		if s.maybeIntercept(message.ID, message, messageData) {
-			return
-		}
-
-		ctx := NewContextWithNode(s, message, node)
+		ctx := NewContextWithNodeAndMessageType(s, &InboundMessage{
+			Data: msg,
+		}, node, msgType)
 
 		ctx.Next()
 		ctx.free()
@@ -112,27 +86,22 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	return true
 }
 
-func (s *Socket) maybeIntercept(messageId string, message *InboundMessage, messageData []byte) bool {
+func (s *socket) getInterceptor(id string) (chan *InboundMessage, bool) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
 
-	if interceptor, ok := s.interceptors[messageId]; ok {
-		interceptor(message, messageData)
-		delete(s.interceptors, messageId)
-		return true
-	}
-
-	return false
+	interceptorChan, ok := s.interceptors[id]
+	return interceptorChan, ok
 }
 
-func (s *Socket) addInterceptor(id string, interceptor func(*InboundMessage, []byte)) {
+func (s *socket) addInterceptor(id string, interceptorChan chan *InboundMessage) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
 
-	s.interceptors[id] = interceptor
+	s.interceptors[id] = interceptorChan
 }
 
-func (s *Socket) removeInterceptor(id string) {
+func (s *socket) removeInterceptor(id string) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
 

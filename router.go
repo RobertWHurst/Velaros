@@ -1,7 +1,6 @@
 package velaros
 
 import (
-	"encoding/json"
 	"net/http"
 	"reflect"
 	"strings"
@@ -11,59 +10,15 @@ import (
 	"github.com/RobertWHurst/navaros"
 )
 
-type MessageDecoder func([]byte) (*InboundMessage, error)
-type MessageEncoder func(*OutboundMessage) ([]byte, error)
-
-func DefaultMessageDecoder(msg []byte) (*InboundMessage, error) {
-	message := &InboundMessage{}
-	err := json.Unmarshal(msg, message)
-	return message, err
-}
-
-func DefaultMessageEncoder(message *OutboundMessage) ([]byte, error) {
-	return json.Marshal(message)
-}
-
 type Router struct {
 	routeDescriptorMap map[string]bool
 	routeDescriptors   []*RouteDescriptor
 	firstHandlerNode   *HandlerNode
 	lastHandlerNode    *HandlerNode
-	interplexer        *interplexer
-	messageDecoder     MessageDecoder
-	messageEncoder     MessageEncoder
 }
-
-var _ RouterHandler = &Router{}
 
 func NewRouter() *Router {
-	return &Router{
-		interplexer:    newInterplexer(),
-		messageEncoder: DefaultMessageEncoder,
-		messageDecoder: DefaultMessageDecoder,
-	}
-}
-
-func (r *Router) RouteDescriptors() []*RouteDescriptor {
-	return r.routeDescriptors
-}
-
-func (r *Router) SetMessageEncoder(encoder MessageEncoder) {
-	r.messageEncoder = encoder
-	if r.interplexer != nil {
-		r.interplexer.messageEncoder = encoder
-	}
-}
-
-func (r *Router) SetMessageDecoder(decoder MessageDecoder) {
-	r.messageDecoder = decoder
-	if r.interplexer != nil {
-		r.interplexer.messageDecoder = decoder
-	}
-}
-
-func (r *Router) ConnectInterplexer(connection InterplexerConnection) error {
-	return r.interplexer.setConnection(connection)
+	return &Router{}
 }
 
 func (r *Router) Middleware() navaros.HandlerFunc {
@@ -97,33 +52,33 @@ func (r *Router) Handle(ctx *Context) {
 	}
 }
 
-func (r *Router) Use(handlersAndTransformers ...any) {
+func (r *Router) Use(handlers ...any) {
 	mountPath := "/**"
-	if len(handlersAndTransformers) != 0 {
-		if customMountPath, ok := handlersAndTransformers[0].(string); ok {
+	if len(handlers) != 0 {
+		if customMountPath, ok := handlers[0].(string); ok {
 			if !strings.HasSuffix(customMountPath, "/**") {
 				customMountPath = strings.TrimSuffix(customMountPath, "/")
 				customMountPath += "/**"
 			}
 			mountPath = customMountPath
-			handlersAndTransformers = handlersAndTransformers[1:]
+			handlers = handlers[1:]
 		}
 	}
 
-	r.bind(false, mountPath, handlersAndTransformers...)
+	r.bind(false, mountPath, handlers...)
 }
 
-func (r *Router) Bind(path string, handlersAndTransformers ...any) {
-	r.bind(false, path, handlersAndTransformers...)
+func (r *Router) Bind(path string, handlers ...any) {
+	r.bind(false, path, handlers...)
 }
 
-func (r *Router) PublicBind(path string, handlersAndTransformers ...any) {
-	r.bind(true, path, handlersAndTransformers...)
+func (r *Router) PublicBind(path string, handlers ...any) {
+	r.bind(true, path, handlers...)
 }
 
-func (r *Router) bind(isPublic bool, path string, handlersAndTransformers ...any) {
-	if len(handlersAndTransformers) == 0 {
-		panic("no handlers or transformers provided")
+func (r *Router) bind(isPublic bool, path string, handlers ...any) {
+	if len(handlers) == 0 {
+		panic("no handlers provided")
 	}
 
 	pattern, err := NewPattern(path)
@@ -131,24 +86,22 @@ func (r *Router) bind(isPublic bool, path string, handlersAndTransformers ...any
 		panic(err)
 	}
 
-	for _, handlerOrTransformer := range handlersAndTransformers {
-		if _, ok := handlerOrTransformer.(Transformer); ok {
+	for _, handler := range handlers {
+		if _, ok := handler.(Handler); ok {
 			continue
-		} else if _, ok := handlerOrTransformer.(Handler); ok {
+		} else if _, ok := handler.(HandlerFunc); ok {
 			continue
-		} else if _, ok := handlerOrTransformer.(HandlerFunc); ok {
-			continue
-		} else if _, ok := handlerOrTransformer.(func(*Context)); ok {
+		} else if _, ok := handler.(func(*Context)); ok {
 			continue
 		}
 
-		panic("invalid handler type. Must be a Transformer, Handler, or " +
-			"HandlerFunc. Got: " + reflect.TypeOf(handlerOrTransformer).String())
+		panic("invalid handler type. Must be Handler, HandlerFunc, or " +
+			"func(*Context). Got: " + reflect.TypeOf(handler).String())
 	}
 
 	hasAddedOwnRouteDescriptor := false
-	for _, handlerOrTransformer := range handlersAndTransformers {
-		if routerHandler, ok := handlerOrTransformer.(RouterHandler); ok {
+	for _, handler := range handlers {
+		if routerHandler, ok := handler.(RouterHandler); ok {
 			for _, routeDescriptor := range routerHandler.RouteDescriptors() {
 				mountPath := strings.TrimSuffix(path, "/**")
 				subPattern, err := NewPattern(mountPath + routeDescriptor.Pattern.String())
@@ -164,8 +117,8 @@ func (r *Router) bind(isPublic bool, path string, handlersAndTransformers ...any
 	}
 
 	nextHandlerNode := &HandlerNode{
-		Pattern:                 pattern,
-		HandlersAndTransformers: handlersAndTransformers,
+		Pattern:  pattern,
+		Handlers: handlers,
 	}
 
 	if r.firstHandlerNode == nil {
@@ -208,7 +161,7 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	}
 	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	socket := NewSocket(&websocketConn{conn: conn}, r.interplexer, nil, r.messageDecoder, r.messageEncoder)
+	socket := newSocket(req.Header, conn)
 	defer socket.close()
 
 	for {

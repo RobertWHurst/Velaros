@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
+	"github.com/coder/websocket"
 	"github.com/google/uuid"
 )
 
@@ -15,26 +17,25 @@ const DefaultRequestTimeout = 5 * time.Second
 type Context struct {
 	parentContext *Context
 
-	id      string
-	socket  *Socket
-	message *InboundMessage
-	path    string
-	params  MessageParams
+	socket      *socket
+	message     *InboundMessage
+	params      MessageParams
+	messageType websocket.MessageType
 
 	Error           error
 	ErrorStack      string
 	FinalError      error
 	FinalErrorStack string
 
-	currentHandlerNode               *HandlerNode
-	matchingHandlerNode              *HandlerNode
-	currentHandlerOrTransformerIndex int
-	currentHandlerOrTransformer      any
+	currentHandlerNode  *HandlerNode
+	matchingHandlerNode *HandlerNode
+	currentHandlerIndex int
+	currentHandler      any
 
 	associatedValues map[string]any
 
-	messageDataUnmarshaler func(into any) error
-	messageDataMarshaller  func(from any) ([]byte, error)
+	messageUnmarshaler func(message *InboundMessage, into any) error
+	messageMarshaller  func(message *OutboundMessage) ([]byte, error)
 
 	deadline     *time.Time
 	doneHandlers []func()
@@ -42,21 +43,24 @@ type Context struct {
 
 var _ context.Context = &Context{}
 
-func NewContext(sender *Socket, message *InboundMessage, handlers ...any) *Context {
-	return NewContextWithNode(sender, message, &HandlerNode{HandlersAndTransformers: handlers})
+func NewContext(sender *socket, message *InboundMessage, handlers ...any) *Context {
+	return NewContextWithNode(sender, message, &HandlerNode{Handlers: handlers})
 }
 
-func NewContextWithNode(socket *Socket, message *InboundMessage, firstHandlerNode *HandlerNode) *Context {
+func NewContextWithNode(socket *socket, message *InboundMessage, firstHandlerNode *HandlerNode) *Context {
+	return NewContextWithNodeAndMessageType(socket, message, firstHandlerNode, websocket.MessageText)
+}
+
+func NewContextWithNodeAndMessageType(socket *socket, message *InboundMessage, firstHandlerNode *HandlerNode, messageType websocket.MessageType) *Context {
 	ctx := contextFromPool()
+
+	if message.ID == "" {
+		message.ID = uuid.NewString()
+	}
 
 	ctx.socket = socket
 	ctx.message = message
-	ctx.id = message.ID
-	ctx.path = message.Path
-
-	if ctx.id == "" {
-		ctx.id = uuid.NewString()
-	}
+	ctx.messageType = messageType
 
 	ctx.currentHandlerNode = firstHandlerNode
 
@@ -70,9 +74,8 @@ func NewSubContextWithNode(ctx *Context, firstHandlerNode *HandlerNode) *Context
 
 	subCtx.socket = ctx.socket
 	subCtx.message = ctx.message
-	subCtx.id = ctx.id
+	subCtx.messageType = ctx.messageType
 
-	subCtx.path = ctx.path
 	subCtx.params = ctx.params
 
 	subCtx.Error = ctx.Error
@@ -80,8 +83,8 @@ func NewSubContextWithNode(ctx *Context, firstHandlerNode *HandlerNode) *Context
 	subCtx.FinalError = ctx.FinalError
 	subCtx.FinalErrorStack = ctx.FinalErrorStack
 
-	subCtx.messageDataUnmarshaler = ctx.messageDataUnmarshaler
-	subCtx.messageDataMarshaller = ctx.messageDataMarshaller
+	subCtx.messageUnmarshaler = ctx.messageUnmarshaler
+	subCtx.messageMarshaller = ctx.messageMarshaller
 
 	for k, v := range ctx.associatedValues {
 		subCtx.associatedValues[k] = v
@@ -108,8 +111,8 @@ func contextFromPool() *Context {
 
 	ctx.socket = nil
 	ctx.message = nil
+	ctx.messageType = 0
 
-	ctx.path = ""
 	for k := range ctx.params {
 		delete(ctx.params, k)
 	}
@@ -119,13 +122,13 @@ func contextFromPool() *Context {
 	ctx.FinalError = nil
 	ctx.FinalErrorStack = ""
 
-	ctx.messageDataUnmarshaler = nil
-	ctx.messageDataMarshaller = nil
+	ctx.messageUnmarshaler = nil
+	ctx.messageMarshaller = nil
 
 	ctx.currentHandlerNode = nil
 	ctx.matchingHandlerNode = nil
-	ctx.currentHandlerOrTransformerIndex = 0
-	ctx.currentHandlerOrTransformer = nil
+	ctx.currentHandlerIndex = 0
+	ctx.currentHandler = nil
 
 	for k := range ctx.associatedValues {
 		delete(ctx.associatedValues, k)
@@ -161,16 +164,29 @@ func (c *Context) SetOnSocket(key string, value any) {
 	c.socket.set(key, value)
 }
 
-func (c *Context) GetFromSocket(key string) any {
+func (c *Context) GetFromSocket(key string) (any, bool) {
 	return c.socket.get(key)
+}
+
+func (c *Context) MustGetFromSocket(key string) any {
+	return c.socket.mustGet(key)
 }
 
 func (c *Context) Set(key string, value any) {
 	c.associatedValues[key] = value
 }
 
-func (c *Context) Get(key string) any {
-	return c.associatedValues[key]
+func (c *Context) Get(key string) (any, bool) {
+	v, ok := c.associatedValues[key]
+	return v, ok
+}
+
+func (c *Context) MustGet(key string) any {
+	v, ok := c.associatedValues[key]
+	if !ok {
+		panic("key not found")
+	}
+	return v
 }
 
 func (c *Context) SocketID() string {
@@ -178,68 +194,102 @@ func (c *Context) SocketID() string {
 }
 
 func (c *Context) MessageID() string {
-	return c.id
+	return c.message.ID
+}
+
+func (c *Context) Data() []byte {
+	return c.message.Data
 }
 
 func (c *Context) Path() string {
-	return c.path
+	return c.message.Path
+}
+
+func (c *Context) Headers() http.Header {
+	return c.socket.requestHeaders
 }
 
 func (c *Context) Params() MessageParams {
 	return c.params
 }
 
-func (c *Context) Data() any {
-	return c.message.Data
+func (c *Context) Unmarshal(into any) error {
+	return c.unmarshalInboundMessage(c.message, into)
 }
 
-func (c *Context) UnmarshalMessageData(into any) error {
-	if c.messageDataUnmarshaler == nil {
-		return errors.New("no message unmarshaller set. use SetMessageDataUnmarshaler or add message parser middleware")
-	}
-	return c.messageDataUnmarshaler(into)
+func (c *Context) SetMessageUnmarshaler(unmarshaler func(message *InboundMessage, into any) error) {
+	c.messageUnmarshaler = unmarshaler
 }
 
-func (c *Context) SetMessageDataUnmarshaler(unmarshaler func(into any) error) {
-	c.messageDataUnmarshaler = unmarshaler
+func (c *Context) SetMessageMarshaller(marshaller func(message *OutboundMessage) ([]byte, error)) {
+	c.messageMarshaller = marshaller
 }
 
-func (c *Context) SetMessageDataMarshaller(marshaller func(from any) ([]byte, error)) {
-	c.messageDataMarshaller = marshaller
+func (c *Context) SetMessageID(id string) {
+	c.message.ID = id
+	c.message.hasSetID = true
 }
 
-func (c *Context) WithSocket(socketID string) (SocketHandle, bool) {
-	return c.socket.withSocket(socketID)
+func (c *Context) SetMessagePath(path string) {
+	c.message.Path = path
+	c.message.hasSetPath = true
+}
+
+func (c *Context) SetMessageData(data []byte) {
+	c.message.Data = data
 }
 
 func (c *Context) Send(data any) error {
-	return c.socket.send(&OutboundMessage{
+	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
 		Data: data,
 	})
+	if err != nil {
+		return err
+	}
+	return c.socket.send(c.messageType, msgBuf)
 }
 
 func (c *Context) Reply(data any) error {
-	if c.id == "" {
+	if c.MessageID() == "" {
 		return errors.New("cannot reply to a message without an ID")
 	}
-	return c.socket.send(&OutboundMessage{
-		ID:   c.id,
+	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
+		ID:   c.MessageID(),
 		Data: data,
 	})
+	if err != nil {
+		return err
+	}
+	return c.socket.send(c.messageType, msgBuf)
+}
+
+func (c *Context) Request(data any) (any, error) {
+	return c.RequestWithTimeout(data, DefaultRequestTimeout)
+}
+
+func (c *Context) RequestWithTimeout(data any, timeout time.Duration) (any, error) {
+	ctx, cancel := context.WithTimeout(c, timeout)
+	defer cancel()
+	return c.RequestWithContext(ctx, data)
 }
 
 func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error) {
 	id := uuid.NewString()
 
 	responseMessageChan := make(chan *InboundMessage, 1)
-	c.socket.addInterceptor(id, func(message *InboundMessage, _ []byte) {
-		responseMessageChan <- message
-	})
+	defer close(responseMessageChan)
+	c.socket.addInterceptor(id, responseMessageChan)
+	defer c.socket.removeInterceptor(id)
 
-	if err := c.socket.send(&OutboundMessage{
+	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
 		ID:   id,
 		Data: data,
-	}); err != nil {
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := c.socket.send(c.messageType, msgBuf); err != nil {
 		return nil, err
 	}
 
@@ -251,14 +301,56 @@ func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error)
 	}
 }
 
-func (c *Context) RequestWithTimeout(data any, timeout time.Duration) (any, error) {
-	ctx, cancel := context.WithTimeout(c, timeout)
-	defer cancel()
-	return c.RequestWithContext(ctx, data)
+func (c *Context) RequestInto(data any, into any) error {
+	return c.RequestIntoWithTimeout(data, into, DefaultRequestTimeout)
 }
 
-func (c *Context) Request(data any) (any, error) {
-	return c.RequestWithTimeout(data, DefaultRequestTimeout)
+func (c *Context) RequestIntoWithTimeout(data any, into any, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(c, timeout)
+	defer cancel()
+	return c.RequestIntoWithContext(ctx, data, into)
+}
+
+func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any) error {
+	id := uuid.NewString()
+
+	responseMessageChan := make(chan *InboundMessage, 1)
+	defer close(responseMessageChan)
+	c.socket.addInterceptor(id, responseMessageChan)
+	defer c.socket.removeInterceptor(id)
+
+	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
+		ID:   id,
+		Data: data,
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := c.socket.send(c.messageType, msgBuf); err != nil {
+		return err
+	}
+
+	select {
+	case responseMessage := <-responseMessageChan:
+		return c.unmarshalInboundMessage(responseMessage, into)
+	case <-ctx.Done():
+		return fmt.Errorf("request cancelled: %w", ctx.Err())
+	}
+}
+
+func (c *Context) unmarshalInboundMessage(message *InboundMessage, into any) error {
+	if c.messageUnmarshaler == nil {
+		return errors.New("no message unmarshaller set. use SetMessageUnmarshaler or add message parser middleware")
+	}
+	return c.messageUnmarshaler(message, into)
+}
+
+func (c *Context) marshallOutboundMessage(message *OutboundMessage) ([]byte, error) {
+	if c.messageMarshaller == nil {
+		return nil, errors.New("no message marshaller set. use SetMessageMarshaller() or add data encoder middleware")
+	}
+	return c.messageMarshaller(message)
 }
 
 // Deadline returns the deadline of the request. Deadline is part of the go

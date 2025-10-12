@@ -8,294 +8,405 @@ import (
 	"time"
 
 	"github.com/RobertWHurst/velaros"
-	localconnection "github.com/RobertWHurst/velaros/local-connection"
+	jsonMiddleware "github.com/RobertWHurst/velaros/middleware/json"
 	"github.com/coder/websocket"
 )
 
-type RequestData struct {
+type testMessage struct {
 	Msg string `json:"msg"`
 }
 
-type ResponseData struct {
-	Msg string `json:"msg"`
+func setupRouter() (*velaros.Router, *httptest.Server) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	return router, server
 }
 
-type ReplyData struct {
-	Msg string `json:"msg"`
+func dialWebSocket(t *testing.T, serverURL string) (*websocket.Conn, context.Context) {
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, serverURL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return conn, ctx
 }
 
-type Reply struct {
-	ID   string    `json:"id"`
-	Data ReplyData `json:"data"`
+func writeMessage(t *testing.T, conn *websocket.Conn, ctx context.Context, id, path string, data any) {
+	msg := map[string]any{"path": path}
+	if id != "" {
+		msg["id"] = id
+	}
+	if data != nil {
+		msg["msg"] = data.(testMessage).Msg
+	}
+	msgBytes, _ := json.Marshal(msg)
+	if err := conn.Write(ctx, websocket.MessageText, msgBytes); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func readMessage(t *testing.T, conn *websocket.Conn, ctx context.Context) (id string, data testMessage) {
+	_, msgBytes, err := conn.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var env struct {
+		ID   string      `json:"id"`
+		Data testMessage `json:"data"`
+	}
+	if err := json.Unmarshal(msgBytes, &env); err != nil {
+		t.Fatalf("unmarshal failed: %v, got: %s", err, string(msgBytes))
+	}
+	return env.ID, env.Data
 }
 
 func TestRouterSimpleHandler(t *testing.T) {
-	router := velaros.NewRouter()
-	server := httptest.NewServer(router)
+	router, server := setupRouter()
+	defer server.Close()
 
-	reqData := RequestData{
-		Msg: "Hello Server",
-	}
-	resData := ResponseData{
-		Msg: "Hello World",
-	}
-
-	router.Bind("/a/b/c", func(ctx *velaros.Context) {
-		if data := ctx.Data().(string); data != "Hello Server" {
-			t.Fatalf("Expected message data to be Hello Server, got %s", data)
+	router.Bind("/echo", func(ctx *velaros.Context) {
+		var req struct {
+			Msg string `json:"msg"`
 		}
-		if err := ctx.Send(resData); err != nil {
-			t.Fatal(err)
+		if err := ctx.Unmarshal(&req); err != nil {
+			t.Errorf("unmarshal failed: %v", err)
+			return
+		}
+		if err := ctx.Send(testMessage{Msg: "Echo: " + req.Msg}); err != nil {
+			t.Errorf("send failed: %v", err)
 		}
 	})
 
-	ctx := context.Background()
-	clientConn, _, err := websocket.Dial(ctx, server.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clientConn.Close(websocket.StatusNormalClosure, "")
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	msg := []byte(`{ "path": "/a/b/c", "data": "Hello Server" }`)
-	if err = clientConn.Write(ctx, websocket.MessageText, msg); err != nil {
-		t.Fatal(err)
-	}
+	writeMessage(t, conn, ctx, "", "/echo", testMessage{Msg: "Hello"})
+	_, response := readMessage(t, conn, ctx)
 
-	_, replyMsg, err := clientConn.Read(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	reply := Reply{Data: ReplyData{}}
-	err = json.Unmarshal(replyMsg, &reply)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if reqData.Msg != "Hello Server" {
-		t.Errorf("expected Hello Server, got %s", reqData.Msg)
-	}
-
-	if reply.Data.Msg != "Hello World" {
-		t.Errorf("expected Hello World, got %s", reply.Data.Msg)
+	if response.Msg != "Echo: Hello" {
+		t.Errorf("expected 'Echo: Hello', got %q", response.Msg)
 	}
 }
 
 func TestRouterMiddleware(t *testing.T) {
-	router := velaros.NewRouter()
-	server := httptest.NewServer(router)
+	router, server := setupRouter()
+	defer server.Close()
 
 	router.Use(func(ctx *velaros.Context) {
-		ctx.Set("message", "Hello World")
+		ctx.Set("greeting", "Hello World")
 		ctx.Next()
 	})
 
-	router.Bind("/a/b/c", func(ctx *velaros.Context) {
-		if err := ctx.Send(ResponseData{
-			Msg: ctx.Get("message").(string),
-		}); err != nil {
-			t.Fatalf("failed to send response: %v", err)
+	router.Bind("/greet", func(ctx *velaros.Context) {
+		greeting := ctx.MustGet("greeting").(string)
+		if err := ctx.Send(testMessage{Msg: greeting}); err != nil {
+			t.Errorf("send failed: %v", err)
 		}
 	})
 
-	ctx := context.Background()
-	clientConn, _, err := websocket.Dial(ctx, server.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clientConn.Close(websocket.StatusNormalClosure, "")
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	msg := []byte(`{ "path": "/a/b/c" }`)
-	err = clientConn.Write(ctx, websocket.MessageText, msg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	writeMessage(t, conn, ctx, "", "/greet", nil)
+	_, response := readMessage(t, conn, ctx)
 
-	_, replyMsg, err := clientConn.Read(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	reply := Reply{Data: ReplyData{}}
-	err = json.Unmarshal(replyMsg, &reply)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if reply.Data.Msg != "Hello World" {
-		t.Errorf("expected Hello World, got %s", reply.Data.Msg)
+	if response.Msg != "Hello World" {
+		t.Errorf("expected 'Hello World', got %q", response.Msg)
 	}
 }
 
-func TestRouterInterplexerWithSend(t *testing.T) {
-	router1 := velaros.NewRouter()
-	router2 := velaros.NewRouter()
+func TestRouterReply(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
 
-	localConnection := localconnection.New()
-
-	if err := router1.ConnectInterplexer(localConnection); err != nil {
-		t.Fatalf("failed to connect interplexer: %v", err)
-	}
-	if err := router2.ConnectInterplexer(localConnection); err != nil {
-		t.Fatalf("failed to connect interplexer: %v", err)
-	}
-
-	server1 := httptest.NewServer(router1)
-	server2 := httptest.NewServer(router2)
-
-	var socketID string
-	router1.Bind("/attach", func(ctx *velaros.Context) {
-		socketID = ctx.SocketID()
-	})
-
-	router2.Bind("/handle-message", func(ctx *velaros.Context) {
-		if socketID == "" {
-			t.Fatal("expected socketID to be set")
+	router.Bind("/echo", func(ctx *velaros.Context) {
+		var req struct {
+			Msg string `json:"msg"`
 		}
-		socket, ok := ctx.WithSocket(socketID)
-		if !ok {
-			t.Fatal("expected to find socket")
+		if err := ctx.Unmarshal(&req); err != nil {
+			t.Errorf("unmarshal failed: %v", err)
+			return
 		}
-
-		if err := socket.Send(ResponseData{
-			Msg: "Hello World",
-		}); err != nil {
-			t.Fatalf("failed to send response: %v", err)
+		if err := ctx.Reply(testMessage{Msg: "Echo: " + req.Msg}); err != nil {
+			t.Errorf("reply failed: %v", err)
 		}
 	})
 
-	ctx := context.Background()
-	clientConn1, _, err := websocket.Dial(ctx, server1.URL, nil)
-	if err != nil {
-		t.Fatal(err)
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "request-123", "/echo", testMessage{Msg: "Hello"})
+	id, response := readMessage(t, conn, ctx)
+
+	if id != "request-123" {
+		t.Errorf("expected ID 'request-123', got %q", id)
 	}
-	defer clientConn1.Close(websocket.StatusNormalClosure, "")
-
-	clientConn2, _, err := websocket.Dial(ctx, server2.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clientConn2.Close(websocket.StatusNormalClosure, "")
-
-	msg := []byte(`{ "path": "/attach" }`)
-	err = clientConn1.Write(ctx, websocket.MessageText, msg)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	time.Sleep(100 * time.Millisecond)
-
-	msg = []byte(`{ "path": "/handle-message" }`)
-	err = clientConn2.Write(ctx, websocket.MessageText, msg)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	_, replyMsg, err := clientConn1.Read(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	reply := Reply{Data: ReplyData{}}
-	err = json.Unmarshal(replyMsg, &reply)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	if reply.Data.Msg != "Hello World" {
-		t.Errorf("expected Hello World, got %s", reply.Data.Msg)
+	if response.Msg != "Echo: Hello" {
+		t.Errorf("expected 'Echo: Hello', got %q", response.Msg)
 	}
 }
 
-func TestRouterInterplexerWithRequest(t *testing.T) {
-	router1 := velaros.NewRouter()
-	router2 := velaros.NewRouter()
+func TestRouterRequest(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
 
-	localConnection := localconnection.New()
-
-	if err := router1.ConnectInterplexer(localConnection); err != nil {
-		t.Fatalf("failed to connect interplexer: %v", err)
-	}
-	if err := router2.ConnectInterplexer(localConnection); err != nil {
-		t.Fatalf("failed to connect interplexer: %v", err)
-	}
-
-	server1 := httptest.NewServer(router1)
-	server2 := httptest.NewServer(router2)
-
-	var socketID string
-	router1.Bind("/attach", func(ctx *velaros.Context) {
-		socketID = ctx.SocketID()
-	})
-
-	router2.Bind("/handle-message", func(ctx *velaros.Context) {
-		if socketID == "" {
-			t.Fatal("expected socketID to be set")
-		}
-		socket, ok := ctx.WithSocket(socketID)
-		if !ok {
-			t.Fatal("expected to find socket")
-		}
-
-		resMsg, err := socket.Request(ResponseData{
-			Msg: "Server Request",
-		})
+	resultChan := make(chan testMessage, 1)
+	router.Bind("/ping", func(ctx *velaros.Context) {
+		response, err := ctx.Request(testMessage{Msg: "Ping"})
 		if err != nil {
-			t.Fatalf("failed to send response: %v", err)
+			t.Errorf("request failed: %v", err)
+			return
 		}
-
-		if resMsg.(string) != "Client Response" {
-			t.Fatalf("expected Client Response, got %s", resMsg)
+		responseData := response.([]byte)
+		var msg struct {
+			Msg string `json:"msg"`
 		}
-
-		ctx.Reply("Server Response")
+		if err := json.Unmarshal(responseData, &msg); err != nil {
+			t.Errorf("unmarshal response failed: %v", err)
+			return
+		}
+		result := testMessage{Msg: "Got: " + msg.Msg}
+		resultChan <- result
+		if err := ctx.Send(result); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
 	})
 
-	ctx := context.Background()
-	clientConn1, _, err := websocket.Dial(ctx, server1.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clientConn1.Close(websocket.StatusNormalClosure, "")
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
 
-	clientConn2, _, err := websocket.Dial(ctx, server2.URL, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer clientConn2.Close(websocket.StatusNormalClosure, "")
+	writeMessage(t, conn, ctx, "", "/ping", nil)
 
-	msg := []byte(`{ "path": "/attach" }`)
-	err = clientConn1.Write(ctx, websocket.MessageText, msg)
-	if err != nil {
-		t.Fatal(err)
+	reqID, reqData := readMessage(t, conn, ctx)
+	if reqData.Msg != "Ping" {
+		t.Fatalf("expected server to send 'Ping', got %q", reqData.Msg)
 	}
 
-	time.Sleep(100 * time.Millisecond)
-
-	msg = []byte(`{ "path": "/handle-message" }`)
-	err = clientConn2.Write(ctx, websocket.MessageText, msg)
-	if err != nil {
+	reply := map[string]any{
+		"id":   reqID,
+		"data": testMessage{Msg: "Pong"},
+	}
+	replyBytes, _ := json.Marshal(reply)
+	if err := conn.Write(ctx, websocket.MessageText, replyBytes); err != nil {
 		t.Fatal(err)
 	}
 
-	_, replyMsg, err := clientConn1.Read(ctx)
-	if err != nil {
+	_, response := readMessage(t, conn, ctx)
+	expected := <-resultChan
+
+	if response.Msg != expected.Msg {
+		t.Errorf("expected %q, got %q", expected.Msg, response.Msg)
+	}
+}
+
+func TestRouterRequestInto(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	resultChan := make(chan testMessage, 1)
+	router.Bind("/ping", func(ctx *velaros.Context) {
+		var response struct {
+			Msg string `json:"msg"`
+		}
+		if err := ctx.RequestInto(testMessage{Msg: "Ping"}, &response); err != nil {
+			t.Errorf("request failed: %v", err)
+			return
+		}
+		result := testMessage{Msg: "Got: " + response.Msg}
+		resultChan <- result
+		if err := ctx.Send(result); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "", "/ping", nil)
+
+	reqID, reqData := readMessage(t, conn, ctx)
+	if reqData.Msg != "Ping" {
+		t.Fatalf("expected server to send 'Ping', got %q", reqData.Msg)
+	}
+
+	reply := map[string]any{
+		"id":   reqID,
+		"data": testMessage{Msg: "Pong"},
+	}
+	replyBytes, _ := json.Marshal(reply)
+	if err := conn.Write(ctx, websocket.MessageText, replyBytes); err != nil {
 		t.Fatal(err)
 	}
 
-	reply := Reply{Data: ReplyData{}}
-	err = json.Unmarshal(replyMsg, &reply)
-	if err != nil {
-		t.Fatal(err)
+	_, response := readMessage(t, conn, ctx)
+	expected := <-resultChan
+
+	if response.Msg != expected.Msg {
+		t.Errorf("expected %q, got %q", expected.Msg, response.Msg)
+	}
+}
+
+func TestRouterRequestWithTimeout(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	router.Bind("/timeout-test", func(ctx *velaros.Context) {
+		_, err := ctx.RequestWithTimeout(testMessage{Msg: "Ping"}, 10*time.Millisecond)
+		if err == nil {
+			t.Error("expected timeout error, got nil")
+			return
+		}
+		if err := ctx.Send(testMessage{Msg: "Timed out"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "", "/timeout-test", nil)
+
+	reqID, reqData := readMessage(t, conn, ctx)
+	if reqData.Msg != "Ping" {
+		t.Fatalf("expected server to send 'Ping', got %q", reqData.Msg)
 	}
 
-	if reply.Data.Msg != "Server Request" {
-		t.Errorf("expected Hello World, got %s", reply.Data.Msg)
+	time.Sleep(50 * time.Millisecond)
+
+	reply := map[string]any{
+		"id":   reqID,
+		"data": testMessage{Msg: "Too late"},
+	}
+	replyBytes, _ := json.Marshal(reply)
+	conn.Write(ctx, websocket.MessageText, replyBytes)
+
+	_, response := readMessage(t, conn, ctx)
+	if response.Msg != "Timed out" {
+		t.Errorf("expected 'Timed out', got %q", response.Msg)
+	}
+}
+
+func TestRouterRequestIntoWithTimeout(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	router.Bind("/timeout-test", func(ctx *velaros.Context) {
+		var response testMessage
+		err := ctx.RequestIntoWithTimeout(testMessage{Msg: "Ping"}, &response, 10*time.Millisecond)
+		if err == nil {
+			t.Error("expected timeout error, got nil")
+			return
+		}
+		if err := ctx.Send(testMessage{Msg: "Timed out"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "", "/timeout-test", nil)
+
+	reqID, reqData := readMessage(t, conn, ctx)
+	if reqData.Msg != "Ping" {
+		t.Fatalf("expected server to send 'Ping', got %q", reqData.Msg)
 	}
 
-	if err := clientConn1.Write(ctx, websocket.MessageText, []byte(`{ "id": "`+reply.ID+`", "data": "Client Response" }`)); err != nil {
-		t.Fatal(err)
+	time.Sleep(50 * time.Millisecond)
+
+	reply := map[string]any{
+		"id":   reqID,
+		"data": testMessage{Msg: "Too late"},
+	}
+	replyBytes, _ := json.Marshal(reply)
+	conn.Write(ctx, websocket.MessageText, replyBytes)
+
+	_, response := readMessage(t, conn, ctx)
+	if response.Msg != "Timed out" {
+		t.Errorf("expected 'Timed out', got %q", response.Msg)
+	}
+}
+
+func TestRouterRequestWithContext(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	router.Bind("/cancel-test", func(ctx *velaros.Context) {
+		cancelCtx, cancel := context.WithCancel(ctx)
+		cancel()
+
+		_, err := ctx.RequestWithContext(cancelCtx, testMessage{Msg: "Ping"})
+		if err == nil {
+			t.Error("expected context cancelled error, got nil")
+			return
+		}
+		if err := ctx.Send(testMessage{Msg: "Cancelled"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "", "/cancel-test", nil)
+
+	reqID, reqData := readMessage(t, conn, ctx)
+	if reqData.Msg != "Ping" {
+		t.Fatalf("expected server to send 'Ping', got %q", reqData.Msg)
 	}
 
-	_, replyMsg, err = clientConn2.Read(ctx)
+	reply := map[string]any{
+		"id":   reqID,
+		"data": testMessage{Msg: "Too late"},
+	}
+	replyBytes, _ := json.Marshal(reply)
+	conn.Write(ctx, websocket.MessageText, replyBytes)
+
+	_, response := readMessage(t, conn, ctx)
+	if response.Msg != "Cancelled" {
+		t.Errorf("expected 'Cancelled', got %q", response.Msg)
+	}
+}
+
+func TestRouterRequestIntoWithContext(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	router.Bind("/cancel-test", func(ctx *velaros.Context) {
+		cancelCtx, cancel := context.WithCancel(ctx)
+		cancel()
+
+		var response testMessage
+		err := ctx.RequestIntoWithContext(cancelCtx, testMessage{Msg: "Ping"}, &response)
+		if err == nil {
+			t.Error("expected context cancelled error, got nil")
+			return
+		}
+		if err := ctx.Send(testMessage{Msg: "Cancelled"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "", "/cancel-test", nil)
+
+	reqID, reqData := readMessage(t, conn, ctx)
+	if reqData.Msg != "Ping" {
+		t.Fatalf("expected server to send 'Ping', got %q", reqData.Msg)
+	}
+
+	reply := map[string]any{
+		"id":   reqID,
+		"data": testMessage{Msg: "Too late"},
+	}
+	replyBytes, _ := json.Marshal(reply)
+	conn.Write(ctx, websocket.MessageText, replyBytes)
+
+	_, response := readMessage(t, conn, ctx)
+	if response.Msg != "Cancelled" {
+		t.Errorf("expected 'Cancelled', got %q", response.Msg)
+	}
 }

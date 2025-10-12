@@ -20,7 +20,7 @@ func main() {
 		})
 
 		for {
-			timeState := ctx.GetFromSocket("timeState").(*TimeState)
+			timeState := ctx.MustGetFromSocket("timeState").(*TimeState)
 			if !timeState.ShouldSendTime() {
 				break
 			}
@@ -39,7 +39,7 @@ func main() {
 
 	router.Bind("/time/stop", func(ctx *velaros.Context) {
 		fmt.Println("Stopping time")
-		timeState := ctx.GetFromSocket("timeState").(*TimeState)
+		timeState := ctx.MustGetFromSocket("timeState").(*TimeState)
 		timeState.Stop()
 	})
 
