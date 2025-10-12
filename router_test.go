@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -408,5 +409,207 @@ func TestRouterRequestIntoWithContext(t *testing.T) {
 	_, response := readMessage(t, conn, ctx)
 	if response.Msg != "Cancelled" {
 		t.Errorf("expected 'Cancelled', got %q", response.Msg)
+	}
+}
+
+func TestRouterBindOpen(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	openCalled := false
+	var capturedSocketID string
+
+	router.BindOpen(func(ctx *velaros.Context) {
+		openCalled = true
+		capturedSocketID = ctx.SocketID()
+		ctx.SetOnSocket("connectedAt", "test-value")
+	})
+
+	router.Bind("/test", func(ctx *velaros.Context) {
+		value, ok := ctx.GetFromSocket("connectedAt")
+		if !ok {
+			t.Error("expected connectedAt to be set on socket")
+		}
+		if value != "test-value" {
+			t.Errorf("expected connectedAt to be 'test-value', got %v", value)
+		}
+		ctx.Send(testMessage{Msg: "ok"})
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "", "/test", nil)
+	readMessage(t, conn, ctx)
+
+	if !openCalled {
+		t.Error("expected BindOpen handler to be called")
+	}
+
+	if capturedSocketID == "" {
+		t.Error("expected socket ID to be captured")
+	}
+}
+
+func TestRouterBindClose(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	closeCalled := false
+	var capturedSocketID string
+
+	router.BindOpen(func(ctx *velaros.Context) {
+		ctx.SetOnSocket("sessionData", "cleanup-me")
+	})
+
+	router.BindClose(func(ctx *velaros.Context) {
+		closeCalled = true
+		capturedSocketID = ctx.SocketID()
+
+		value, ok := ctx.GetFromSocket("sessionData")
+		if !ok {
+			t.Error("expected sessionData to be available in close handler")
+		}
+		if value != "cleanup-me" {
+			t.Errorf("expected sessionData to be 'cleanup-me', got %v", value)
+		}
+		wg.Done()
+	})
+
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+
+	wg.Wait()
+
+	if !closeCalled {
+		t.Error("expected BindClose handler to be called")
+	}
+
+	if capturedSocketID == "" {
+		t.Error("expected socket ID to be captured")
+	}
+}
+
+func TestRouterBindOpenAndClose(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	openCalled := false
+	closeCalled := false
+	var openSocketID, closeSocketID string
+
+	router.BindOpen(func(ctx *velaros.Context) {
+		openCalled = true
+		openSocketID = ctx.SocketID()
+	})
+
+	router.BindClose(func(ctx *velaros.Context) {
+		closeCalled = true
+		closeSocketID = ctx.SocketID()
+		wg.Done()
+	})
+
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	conn.Close(websocket.StatusNormalClosure, "")
+
+	wg.Wait()
+
+	if !openCalled {
+		t.Error("expected BindOpen handler to be called")
+	}
+
+	if !closeCalled {
+		t.Error("expected BindClose handler to be called")
+	}
+
+	if openSocketID == "" {
+		t.Error("expected open socket ID to be captured")
+	}
+
+	if closeSocketID == "" {
+		t.Error("expected close socket ID to be captured")
+	}
+
+	if openSocketID != closeSocketID {
+		t.Errorf("expected same socket ID in open and close, got %s and %s", openSocketID, closeSocketID)
+	}
+}
+
+func TestRouterMultipleBindOpen(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	firstCalled := false
+	secondCalled := false
+
+	router.BindOpen(func(ctx *velaros.Context) {
+		firstCalled = true
+		ctx.SetOnSocket("first", "done")
+		ctx.Next()
+	})
+
+	router.BindOpen(func(ctx *velaros.Context) {
+		secondCalled = true
+		if _, ok := ctx.GetFromSocket("first"); !ok {
+			t.Error("expected first handler to have run")
+		}
+		ctx.SetOnSocket("second", "done")
+	})
+
+	router.Bind("/test", func(ctx *velaros.Context) {
+		if _, ok := ctx.GetFromSocket("first"); !ok {
+			t.Error("expected first handler to have set value")
+		}
+		if _, ok := ctx.GetFromSocket("second"); !ok {
+			t.Error("expected second handler to have set value")
+		}
+		ctx.Send(map[string]string{"status": "ok"})
+	})
+
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	msg := []byte(`{"path": "/test"}`)
+	if err := conn.Write(ctx, websocket.MessageText, msg); err != nil {
+		t.Fatal(err)
+	}
+
+	_, _, err = conn.Read(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !firstCalled {
+		t.Error("expected first BindOpen handler to be called")
+	}
+
+	if !secondCalled {
+		t.Error("expected second BindOpen handler to be called")
 	}
 }

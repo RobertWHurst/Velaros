@@ -10,11 +10,23 @@ import (
 	"github.com/RobertWHurst/navaros"
 )
 
+type BindType int
+
+const (
+	BindTypeBind BindType = iota
+	BindTypeBindOpen
+	BindTypeBindClose
+)
+
 type Router struct {
 	routeDescriptorMap map[string]bool
 	routeDescriptors   []*RouteDescriptor
 	firstHandlerNode   *HandlerNode
 	lastHandlerNode    *HandlerNode
+	firstOpenHandlerNode   *HandlerNode
+	lastOpenHandlerNode    *HandlerNode
+	firstCloseHandlerNode  *HandlerNode
+	lastCloseHandlerNode   *HandlerNode
 }
 
 func NewRouter() *Router {
@@ -65,25 +77,28 @@ func (r *Router) Use(handlers ...any) {
 		}
 	}
 
-	r.bind(false, mountPath, handlers...)
+	r.bind(BindTypeBind, false, mountPath, handlers...)
 }
 
 func (r *Router) Bind(path string, handlers ...any) {
-	r.bind(false, path, handlers...)
+	r.bind(BindTypeBind, false, path, handlers...)
 }
 
 func (r *Router) PublicBind(path string, handlers ...any) {
-	r.bind(true, path, handlers...)
+	r.bind(BindTypeBind, true, path, handlers...)
 }
 
-func (r *Router) bind(isPublic bool, path string, handlers ...any) {
+func (r *Router) BindOpen(handlers ...any) {
+	r.bind(BindTypeBindOpen, false, "", handlers...)
+}
+
+func (r *Router) BindClose(handlers ...any) {
+	r.bind(BindTypeBindClose, false, "", handlers...)
+}
+
+func (r *Router) bind(bindType BindType, isPublic bool, path string, handlers ...any) {
 	if len(handlers) == 0 {
 		panic("no handlers provided")
-	}
-
-	pattern, err := NewPattern(path)
-	if err != nil {
-		panic(err)
 	}
 
 	for _, handler := range handlers {
@@ -99,20 +114,29 @@ func (r *Router) bind(isPublic bool, path string, handlers ...any) {
 			"func(*Context). Got: " + reflect.TypeOf(handler).String())
 	}
 
-	hasAddedOwnRouteDescriptor := false
-	for _, handler := range handlers {
-		if routerHandler, ok := handler.(RouterHandler); ok {
-			for _, routeDescriptor := range routerHandler.RouteDescriptors() {
-				mountPath := strings.TrimSuffix(path, "/**")
-				subPattern, err := NewPattern(mountPath + routeDescriptor.Pattern.String())
-				if err != nil {
-					panic(err)
+	var pattern *Pattern
+	if bindType == BindTypeBind {
+		var err error
+		pattern, err = NewPattern(path)
+		if err != nil {
+			panic("invalid route pattern \"" + path + "\": " + err.Error())
+		}
+
+		hasAddedOwnRouteDescriptor := false
+		for _, handler := range handlers {
+			if routerHandler, ok := handler.(RouterHandler); ok {
+				for _, routeDescriptor := range routerHandler.RouteDescriptors() {
+					mountPath := strings.TrimSuffix(path, "/**")
+					subPattern, err := NewPattern(mountPath + routeDescriptor.Pattern.String())
+					if err != nil {
+						panic("invalid route pattern \"" + mountPath + routeDescriptor.Pattern.String() + "\": " + err.Error())
+					}
+					r.addRouteDescriptor(subPattern)
 				}
-				r.addRouteDescriptor(subPattern)
+			} else if isPublic && !hasAddedOwnRouteDescriptor {
+				r.addRouteDescriptor(pattern)
+				hasAddedOwnRouteDescriptor = true
 			}
-		} else if isPublic && !hasAddedOwnRouteDescriptor {
-			r.addRouteDescriptor(pattern)
-			hasAddedOwnRouteDescriptor = true
 		}
 	}
 
@@ -121,12 +145,31 @@ func (r *Router) bind(isPublic bool, path string, handlers ...any) {
 		Handlers: handlers,
 	}
 
-	if r.firstHandlerNode == nil {
-		r.firstHandlerNode = nextHandlerNode
-		r.lastHandlerNode = nextHandlerNode
-	} else {
-		r.lastHandlerNode.Next = nextHandlerNode
-		r.lastHandlerNode = nextHandlerNode
+	switch bindType {
+	case BindTypeBind:
+		if r.firstHandlerNode == nil {
+			r.firstHandlerNode = nextHandlerNode
+			r.lastHandlerNode = nextHandlerNode
+		} else {
+			r.lastHandlerNode.Next = nextHandlerNode
+			r.lastHandlerNode = nextHandlerNode
+		}
+	case BindTypeBindOpen:
+		if r.firstOpenHandlerNode == nil {
+			r.firstOpenHandlerNode = nextHandlerNode
+			r.lastOpenHandlerNode = nextHandlerNode
+		} else {
+			r.lastOpenHandlerNode.Next = nextHandlerNode
+			r.lastOpenHandlerNode = nextHandlerNode
+		}
+	case BindTypeBindClose:
+		if r.firstCloseHandlerNode == nil {
+			r.firstCloseHandlerNode = nextHandlerNode
+			r.lastCloseHandlerNode = nextHandlerNode
+		} else {
+			r.lastCloseHandlerNode.Next = nextHandlerNode
+			r.lastCloseHandlerNode = nextHandlerNode
+		}
 	}
 }
 
@@ -164,9 +207,21 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	socket := newSocket(req.Header, conn)
 	defer socket.close()
 
+	if r.firstOpenHandlerNode != nil {
+		openCtx := NewContextWithNode(socket, &InboundMessage{}, r.firstOpenHandlerNode)
+		openCtx.Next()
+		openCtx.free()
+	}
+
 	for {
 		if !socket.handleNextMessageWithNode(r.firstHandlerNode) {
 			break
 		}
+	}
+
+	if r.firstCloseHandlerNode != nil {
+		closeCtx := NewContextWithNode(socket, &InboundMessage{}, r.firstCloseHandlerNode)
+		closeCtx.Next()
+		closeCtx.free()
 	}
 }
