@@ -412,14 +412,14 @@ func TestRouterRequestIntoWithContext(t *testing.T) {
 	}
 }
 
-func TestRouterBindOpen(t *testing.T) {
+func TestRouterUseOpen(t *testing.T) {
 	router, server := setupRouter()
 	defer server.Close()
 
 	openCalled := false
 	var capturedSocketID string
 
-	router.BindOpen(func(ctx *velaros.Context) {
+	router.UseOpen(func(ctx *velaros.Context) {
 		openCalled = true
 		capturedSocketID = ctx.SocketID()
 		ctx.SetOnSocket("connectedAt", "test-value")
@@ -443,7 +443,7 @@ func TestRouterBindOpen(t *testing.T) {
 	readMessage(t, conn, ctx)
 
 	if !openCalled {
-		t.Error("expected BindOpen handler to be called")
+		t.Error("expected UseOpen handler to be called")
 	}
 
 	if capturedSocketID == "" {
@@ -451,7 +451,7 @@ func TestRouterBindOpen(t *testing.T) {
 	}
 }
 
-func TestRouterBindClose(t *testing.T) {
+func TestRouterUseClose(t *testing.T) {
 	router := velaros.NewRouter()
 	router.Use(jsonMiddleware.Middleware())
 	server := httptest.NewServer(router)
@@ -463,11 +463,11 @@ func TestRouterBindClose(t *testing.T) {
 	closeCalled := false
 	var capturedSocketID string
 
-	router.BindOpen(func(ctx *velaros.Context) {
+	router.UseOpen(func(ctx *velaros.Context) {
 		ctx.SetOnSocket("sessionData", "cleanup-me")
 	})
 
-	router.BindClose(func(ctx *velaros.Context) {
+	router.UseClose(func(ctx *velaros.Context) {
 		closeCalled = true
 		capturedSocketID = ctx.SocketID()
 
@@ -492,7 +492,7 @@ func TestRouterBindClose(t *testing.T) {
 	wg.Wait()
 
 	if !closeCalled {
-		t.Error("expected BindClose handler to be called")
+		t.Error("expected UseClose handler to be called")
 	}
 
 	if capturedSocketID == "" {
@@ -500,7 +500,7 @@ func TestRouterBindClose(t *testing.T) {
 	}
 }
 
-func TestRouterBindOpenAndClose(t *testing.T) {
+func TestRouterUseOpenAndClose(t *testing.T) {
 	router := velaros.NewRouter()
 	router.Use(jsonMiddleware.Middleware())
 	server := httptest.NewServer(router)
@@ -513,12 +513,12 @@ func TestRouterBindOpenAndClose(t *testing.T) {
 	closeCalled := false
 	var openSocketID, closeSocketID string
 
-	router.BindOpen(func(ctx *velaros.Context) {
+	router.UseOpen(func(ctx *velaros.Context) {
 		openCalled = true
 		openSocketID = ctx.SocketID()
 	})
 
-	router.BindClose(func(ctx *velaros.Context) {
+	router.UseClose(func(ctx *velaros.Context) {
 		closeCalled = true
 		closeSocketID = ctx.SocketID()
 		wg.Done()
@@ -535,11 +535,11 @@ func TestRouterBindOpenAndClose(t *testing.T) {
 	wg.Wait()
 
 	if !openCalled {
-		t.Error("expected BindOpen handler to be called")
+		t.Error("expected UseOpen handler to be called")
 	}
 
 	if !closeCalled {
-		t.Error("expected BindClose handler to be called")
+		t.Error("expected UseClose handler to be called")
 	}
 
 	if openSocketID == "" {
@@ -555,7 +555,7 @@ func TestRouterBindOpenAndClose(t *testing.T) {
 	}
 }
 
-func TestRouterMultipleBindOpen(t *testing.T) {
+func TestRouterMultipleUseOpen(t *testing.T) {
 	router := velaros.NewRouter()
 	router.Use(jsonMiddleware.Middleware())
 	server := httptest.NewServer(router)
@@ -564,13 +564,13 @@ func TestRouterMultipleBindOpen(t *testing.T) {
 	firstCalled := false
 	secondCalled := false
 
-	router.BindOpen(func(ctx *velaros.Context) {
+	router.UseOpen(func(ctx *velaros.Context) {
 		firstCalled = true
 		ctx.SetOnSocket("first", "done")
 		ctx.Next()
 	})
 
-	router.BindOpen(func(ctx *velaros.Context) {
+	router.UseOpen(func(ctx *velaros.Context) {
 		secondCalled = true
 		if _, ok := ctx.GetFromSocket("first"); !ok {
 			t.Error("expected first handler to have run")
@@ -606,11 +606,11 @@ func TestRouterMultipleBindOpen(t *testing.T) {
 	}
 
 	if !firstCalled {
-		t.Error("expected first BindOpen handler to be called")
+		t.Error("expected first UseOpen handler to be called")
 	}
 
 	if !secondCalled {
-		t.Error("expected second BindOpen handler to be called")
+		t.Error("expected second UseOpen handler to be called")
 	}
 }
 
@@ -624,7 +624,7 @@ func TestContextClose(t *testing.T) {
 		ctx.Close()
 	})
 
-	router.BindClose(func(ctx *velaros.Context) {
+	router.UseClose(func(ctx *velaros.Context) {
 		close(closeChan)
 	})
 
@@ -636,7 +636,7 @@ func TestContextClose(t *testing.T) {
 	select {
 	case <-closeChan:
 	case <-time.After(10 * time.Second):
-		t.Error("expected BindClose handler to be called after ctx.Close()")
+		t.Error("expected UseClose handler to be called after ctx.Close()")
 	}
 }
 

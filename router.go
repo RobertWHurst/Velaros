@@ -88,11 +88,11 @@ func (r *Router) PublicBind(path string, handlers ...any) {
 	r.bind(BindTypeBind, true, path, handlers...)
 }
 
-func (r *Router) BindOpen(handlers ...any) {
+func (r *Router) UseOpen(handlers ...any) {
 	r.bind(BindTypeBindOpen, false, "", handlers...)
 }
 
-func (r *Router) BindClose(handlers ...any) {
+func (r *Router) UseClose(handlers ...any) {
 	r.bind(BindTypeBindClose, false, "", handlers...)
 }
 
