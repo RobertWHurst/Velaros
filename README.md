@@ -1,6 +1,8 @@
 # Velaros
 
-A lightweight, flexible WebSocket framework for Go.
+A lightweight, flexible WebSocket framework for Go. Build real-time applications with powerful message routing, bidirectional communication, and composable middleware.
+
+Velaros implements the standard `http.Handler` interface, so it works seamlessly with any Go HTTP router or framework - just mount it on a path like `/ws` and it handles the WebSocket upgrade automatically.
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/RobertWHurst/velaros.svg)](https://pkg.go.dev/github.com/RobertWHurst/velaros)
 [![Go Report Card](https://goreportcard.com/badge/github.com/RobertWHurst/velaros)](https://goreportcard.com/report/github.com/RobertWHurst/velaros)
@@ -8,10 +10,11 @@ A lightweight, flexible WebSocket framework for Go.
 ## Features
 
 - 🚀 **High Performance** - Context pooling and efficient message routing
-- 🔄 **Bidirectional** - Full duplex communication with Send, Reply, and Request patterns
-- 🎯 **Pattern Matching** - Flexible path routing with parameters and wildcards
+- 🔄 **Bidirectional** - Full duplex communication with Send, Reply, Request, and RequestInto patterns
+- 🎯 **Powerful Patterns** - Flexible routing with parameters, wildcards, regex constraints, and modifiers (?, +, *)
 - 🔌 **Middleware** - Composable middleware for authentication, logging, and more
 - 📦 **Type Detection** - Automatic text/binary message type handling
+- ⏱️ **Timeout Control** - Request timeouts and context cancellation for server→client requests
 - 🧩 **Extensible** - Simple interfaces for custom handlers and middleware
 
 ## Installation
@@ -70,8 +73,11 @@ func main() {
         })
     })
 
-    log.Println("Starting server on :8080")
-    http.ListenAndServe(":8080", router)
+    // Mount the WebSocket router at /ws
+    http.Handle("/ws", router)
+
+    log.Println("WebSocket server listening on ws://localhost:8080/ws")
+    http.ListenAndServe(":8080", nil)
 }
 ```
 
@@ -199,9 +205,46 @@ router.Use(setfn.Middleware("requestID", func() string {
 router.Use("/auth/login", socketset.Middleware("authenticated", true))
 ```
 
+## Integration with HTTP Servers
+
+Velaros implements the standard `http.Handler` interface, making it compatible with any Go HTTP router or framework. It can be mounted at any path and will automatically handle WebSocket upgrade requests.
+
+```go
+// Standard net/http
+router := velaros.NewRouter()
+http.Handle("/ws", router)
+http.ListenAndServe(":8080", nil)
+
+// Gorilla Mux
+mux := mux.NewRouter()
+mux.Handle("/ws", router)
+
+// Chi
+r := chi.NewRouter()
+r.Handle("/ws", router)
+
+// Gin
+ginRouter := gin.Default()
+ginRouter.Any("/ws", gin.WrapH(router))
+
+// Echo
+e := echo.New()
+e.Any("/ws", echo.WrapHandler(router))
+```
+
+You can also use it alongside your existing HTTP routes:
+
+```go
+// Serve both HTTP and WebSocket on the same server
+http.HandleFunc("/", handleHome)
+http.HandleFunc("/api/users", handleUsers)
+http.Handle("/ws", velarosRouter)  // WebSocket endpoint
+http.ListenAndServe(":8080", nil)
+```
+
 ## Routing
 
-Velaros supports flexible pattern-based routing for WebSocket messages. Routes can match exact paths, include named parameters (prefixed with colons), or use wildcards (double asterisks for catch-all). Parameters are extracted and made available through the context. Middleware can also be scoped to specific path patterns.
+Velaros supports pattern-based routing for WebSocket messages. Routes can match exact paths, include named parameters, or use wildcards. Parameters are extracted and made available through the context. Middleware can also be scoped to specific path patterns.
 
 ```go
 // Exact path match
@@ -211,16 +254,159 @@ router.Bind("/users/list", func(ctx *velaros.Context) {
 
 // Named parameters
 router.Bind("/users/:id", func(ctx *velaros.Context) {
-    userID := ctx.Param("id")
+    userID := ctx.Params().Get("id")
     user := getUserByID(userID)
     ctx.Send(UserResponse{User: user})
 })
 
 // Wildcard matching
-router.Bind("/files/**", func(ctx *velaros.Context) {
+router.Bind("/files/*", func(ctx *velaros.Context) {
     path := ctx.Path()
     log.Printf("File request: %s", path)
 })
+```
+
+### Message Path Patterns
+
+Velaros supports fairly powerful message path patterns. The following is a list of supported pattern chunk types.
+
+- Static - `/a/b/c` - Matches the exact path
+- Wildcard - `/a/*/c` - Pattern segments with a single `*` match any path segment
+- Dynamic - `/a/:b/c` - Pattern segments prefixed with `:` match any path segment and the value of this segment from the matched path is available via the `Params` method, and will be filled under a key matching the name of the pattern segment, ie: pattern of `/a/:b/c` will match `/a/1/c` and the value of `b` in the params will be `1`
+
+Pattern chunks can also be suffixed with additional modifiers.
+
+- `?` - Optional - `/a/:b?/c` - Matches `/a/c` and `/a/1/c`
+- `*` - Greedy - `/a/:b*/c` - Matches `/a/c` and `/a/1/2/3/c`
+- `+` - One or more - `/a/:b+/c` - Matches `/a/1/c` and `/a/1/2/3/c` but not `/a/c`
+
+You can also provide a regular expression to restrict matches for a pattern chunk.
+
+- `/a/:b(\\d+)/c` - Matches `/a/1/c` and `/a/2/c` but not `/a/b/c`
+
+You can escape any of the special characters used by these operators by prefixing them with a `\\`.
+
+- `/a/\\:b/c` - Matches `/a/:b/c`
+
+And all of these can be combined.
+
+- `/a/:b(\\d+)/*?/(d|e)+` - Matches `/a/1/d`, `/a/1/e`, `/a/2/c/d/e/f/g`, and `/a/3/1/d` but not `/a/b/c`, `/a/1`, or `/a/1/c/f`
+
+This is all most likely overkill, but if you ever need it, it's here.
+
+### Handler and Middleware Ordering
+
+Handlers and middleware are executed in the order they are added to the router. This means that a handler added before another will always be checked for a match against the incoming message first regardless of the path pattern. This means you can easily predict how your handlers will be executed.
+
+It also means that your handlers with more specific patterns should be added before any others that may share a common match.
+
+```go
+router.Bind("/album/:id(\\d{24})", GetAlbumByID)
+router.Bind("/album/:name", GetAlbumsByName)
+```
+
+## Bidirectional Communication
+
+Unlike HTTP, WebSocket connections are bidirectional - the server can send messages to clients at any time, not just in response to requests. Velaros provides several communication patterns to leverage this capability.
+
+### Send and Reply
+
+Use `Send()` to send a message without expecting a response, or `Reply()` to respond to a message that includes an ID:
+
+```go
+router.Bind("/notify", func(ctx *velaros.Context) {
+    // Reply to the original message (preserves message ID)
+    ctx.Reply(AckResponse{Status: "received"})
+
+    // Later, send additional messages
+    time.Sleep(time.Second)
+    ctx.Send(NotificationMessage{Text: "Processing complete"})
+})
+```
+
+### Request and Response
+
+The server can initiate requests to clients and wait for responses using the `Request()` family of methods:
+
+```go
+type ConfirmRequest struct {
+    Action string `json:"action"`
+}
+
+type ConfirmResponse struct {
+    Confirmed bool `json:"confirmed"`
+}
+
+router.Bind("/delete/:id", func(ctx *velaros.Context) {
+    id := ctx.Params().Get("id")
+
+    // Ask the client for confirmation
+    response, err := ctx.Request(ConfirmRequest{
+        Action: "delete item " + id,
+    })
+    if err != nil {
+        ctx.Send(ErrorResponse{Error: "confirmation timeout"})
+        return
+    }
+
+    // Parse the response
+    var confirm ConfirmResponse
+    json.Unmarshal(response.([]byte), &confirm)
+
+    if confirm.Confirmed {
+        deleteItem(id)
+        ctx.Send(SuccessResponse{Status: "deleted"})
+    } else {
+        ctx.Send(ErrorResponse{Error: "cancelled"})
+    }
+})
+```
+
+### Typed Requests with RequestInto
+
+For cleaner code, use `RequestInto()` which automatically unmarshals the response:
+
+```go
+router.Bind("/delete/:id", func(ctx *velaros.Context) {
+    id := ctx.Params().Get("id")
+
+    var confirm ConfirmResponse
+    if err := ctx.RequestInto(ConfirmRequest{
+        Action: "delete item " + id,
+    }, &confirm); err != nil {
+        ctx.Send(ErrorResponse{Error: "confirmation timeout"})
+        return
+    }
+
+    if confirm.Confirmed {
+        deleteItem(id)
+        ctx.Send(SuccessResponse{Status: "deleted"})
+    }
+})
+```
+
+### Request Timeouts and Cancellation
+
+Control request timeouts and cancellation using context-aware variants:
+
+```go
+// Custom timeout
+var response ConfirmResponse
+err := ctx.RequestIntoWithTimeout(
+    ConfirmRequest{Action: "approve"},
+    &response,
+    30 * time.Second,
+)
+
+// Full context control
+cancelCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+defer cancel()
+
+err := ctx.RequestIntoWithContext(
+    cancelCtx,
+    ConfirmRequest{Action: "approve"},
+    &response,
+)
 ```
 
 ## Advanced Usage
@@ -323,33 +509,6 @@ router.Bind("/data/process", func(ctx *velaros.Context) {
 
     ctx.Send(SuccessResponse{Status: "processed"})
 })
-```
-
-### Works with Any HTTP Server
-
-Velaros implements the standard http.Handler interface, making it compatible with any Go HTTP router or framework. It can be mounted at any path and will automatically handle WebSocket upgrade requests.
-
-```go
-// Standard net/http
-router := velaros.NewRouter()
-http.Handle("/ws", router)
-http.ListenAndServe(":8080", nil)
-
-// Gorilla Mux
-mux := mux.NewRouter()
-mux.Handle("/ws", router)
-
-// Chi
-r := chi.NewRouter()
-r.Handle("/ws", router)
-
-// Gin
-ginRouter := gin.Default()
-ginRouter.Any("/ws", gin.WrapH(router))
-
-// Echo
-e := echo.New()
-e.Any("/ws", echo.WrapHandler(router))
 ```
 
 ## Message Types
