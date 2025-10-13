@@ -7,6 +7,40 @@ Velaros implements the standard `http.Handler` interface, so it works seamlessly
 [![Go Reference](https://pkg.go.dev/badge/github.com/RobertWHurst/velaros.svg)](https://pkg.go.dev/github.com/RobertWHurst/velaros)
 [![Go Report Card](https://goreportcard.com/badge/github.com/RobertWHurst/velaros)](https://goreportcard.com/report/github.com/RobertWHurst/velaros)
 
+## Table of Contents
+
+- [Features](#features)
+- [Installation](#installation)
+- [Quick Start](#quick-start)
+- [Client Integration](#client-integration)
+- [Core Concepts](#core-concepts)
+  - [Message Format](#message-format)
+  - [Context](#context)
+  - [Context Lifecycle](#context-lifecycle)
+  - [Middleware](#middleware)
+- [Built-in Middleware](#built-in-middleware)
+  - [JSON Middleware](#json-middleware)
+  - [MessagePack Middleware](#messagepack-middleware)
+  - [Protocol Buffers Middleware](#protocol-buffers-middleware)
+  - [Set Middleware](#set-middleware)
+- [Integration with HTTP Servers](#integration-with-http-servers)
+- [Configuration](#configuration)
+- [Routing](#routing)
+- [Connection Lifecycle](#connection-lifecycle)
+- [Bidirectional Communication](#bidirectional-communication)
+- [Advanced Usage](#advanced-usage)
+  - [Authentication](#authentication)
+  - [Error Handling](#error-handling)
+  - [API Gateway Integration](#api-gateway-integration)
+- [Message Types](#message-types)
+- [Performance](#performance)
+- [Architecture](#architecture)
+- [Examples](#examples)
+- [Testing](#testing)
+- [Help Welcome](#help-welcome)
+- [License](#license)
+- [Related Projects](#related-projects)
+
 ## Features
 
 - 🚀 **High Performance** - Context pooling and efficient message routing
@@ -2027,9 +2061,17 @@ func TestServerInitiatedRequest(t *testing.T) {
 - Test both happy path and error cases
 - Use table-driven tests for testing multiple scenarios
 
-## Contributing
+## Help Welcome
 
-Pull requests are welcome!
+If you want to support this project with coffee money, it's greatly appreciated.
+
+[![sponsor](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/RobertWHurst)
+
+If you're interested in providing feedback or would like to contribute, please feel free to do so. I recommend first [opening an issue][feature-request] expressing your feedback or intent to contribute a change. From there we can consider your feedback or guide your contribution efforts. Any and all help is greatly appreciated.
+
+Thank you!
+
+[feature-request]: https://github.com/RobertWHurst/Velaros/issues/new?template=feature_request.md
 
 ## License
 
@@ -2038,4 +2080,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Related Projects
 
 - [Navaros](https://github.com/RobertWHurst/Navaros) - HTTP framework for Go (companion project, shares similar API design)
+- [Zephyr](https://github.com/TelemetryTV/Zephyr) - Microservice framework built on Navaros with service discovery and fulling streaming HTTP all the way to the service.
 - Eurus - WebSocket API gateway framework (upcoming, integrates with Velaros via route descriptors)
