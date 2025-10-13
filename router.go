@@ -328,7 +328,7 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	socket := NewSocket(req.Header, conn)
 
 	if r.firstOpenHandlerNode != nil {
-		openCtx := NewContextWithNode(socket, &InboundMessage{}, r.firstOpenHandlerNode)
+		openCtx := NewContextWithNode(socket, inboundMessageFromPool(), r.firstOpenHandlerNode)
 		openCtx.Next()
 		openCtx.free()
 	}
@@ -340,7 +340,7 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	}
 
 	if r.firstCloseHandlerNode != nil {
-		closeCtx := NewContextWithNode(socket, &InboundMessage{}, r.firstCloseHandlerNode)
+		closeCtx := NewContextWithNode(socket, inboundMessageFromPool(), r.firstCloseHandlerNode)
 		closeCtx.Next()
 		closeCtx.free()
 	}

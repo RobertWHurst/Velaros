@@ -142,9 +142,10 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	}
 
 	go func() {
-		ctx := NewContextWithNodeAndMessageType(s, &InboundMessage{
-			Data: msg,
-		}, node, msgType)
+		inboundMsg := inboundMessageFromPool()
+		inboundMsg.Data = msg
+
+		ctx := NewContextWithNodeAndMessageType(s, inboundMsg, node, msgType)
 
 		ctx.Next()
 		ctx.free()

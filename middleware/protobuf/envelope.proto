@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package velaros.protobuf;
+
+option go_package = "github.com/RobertWHurst/velaros/middleware/protobuf";
+
+// Envelope wraps your protocol buffer messages with routing metadata.
+// This is internal to the Velaros protobuf middleware - on the server side
+// you work directly with your own .proto definitions without envelope awareness.
+//
+// The envelope provides:
+//   - Message ID for request/reply correlation
+//   - Path for routing to handlers
+//   - Data field containing your serialized protobuf message
+//
+// Define your own .proto schemas following the standard Protocol Buffers
+// tutorial and use them directly with Velaros. The middleware automatically
+// wraps and unwraps messages in this envelope format.
+message Envelope {
+  // id is the message identifier used for request/reply correlation.
+  // Optional for one-way messages, required for request/reply patterns.
+  string id = 1;
+
+  // path is the message path used for routing to handlers.
+  // Format can be gRPC-style ("/package.Service/Method") or custom ("/api/users/get").
+  string path = 2;
+
+  // data contains your serialized protocol buffer message.
+  // This is the bytes from proto.Marshal(yourMessage).
+  bytes data = 3;
+}

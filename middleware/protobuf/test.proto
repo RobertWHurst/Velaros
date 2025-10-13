@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package test;
+
+option go_package = "github.com/RobertWHurst/velaros/middleware/protobuf";
+
+// TestRequest is a simple test message for middleware testing
+message TestRequest {
+  int64 user_id = 1;
+  string name = 2;
+}
+
+// TestResponse is a simple test response message
+message TestResponse {
+  string message = 1;
+  int32 code = 2;
+}

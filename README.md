@@ -365,6 +365,51 @@ router.Bind("/admin/users", func(ctx *velaros.Context) {
 
 **Note:** Headers are only available from the initial WebSocket handshake. Once the WebSocket connection is established, all communication uses WebSocket frames, not HTTP.
 
+### Context Lifecycle
+
+**Important:** Context objects are pooled and reused for performance. When a handler returns, its context is immediately returned to the pool and may be reused for a different message. This means **handlers must block until all operations using the context are complete**.
+
+If you spawn a goroutine or set up a callback that references the context after the handler returns, those operations will fail with an error: `"context cannot be used after handler returns - handlers must block until all operations complete"`.
+
+**Wrong - Don't do this:**
+
+```go
+// ❌ This will fail - goroutine uses context after handler returns
+router.Bind("/subscribe", func(ctx *velaros.Context) {
+    ctx.Reply(SubscribeResponse{Status: "subscribed"})
+
+    go func() {
+        time.Sleep(time.Second)
+        ctx.Send(Update{Data: "..."}) // ERROR: context already returned to pool
+    }()
+    // Handler returns immediately - context is freed
+})
+```
+
+**Right - Handler blocks:**
+
+```go
+// ✓ Correct - handler blocks until all operations complete
+router.Bind("/subscribe", func(ctx *velaros.Context) {
+    ctx.Reply(SubscribeResponse{Status: "subscribed"})
+
+    subscription := messageQueue.Subscribe("updates")
+    defer subscription.Unsubscribe()
+
+    // Handler blocks here, keeping context alive
+    for {
+        select {
+        case msg := <-subscription.Messages():
+            ctx.Send(Update{Data: msg}) // Safe: handler still owns context
+        case <-ctx.Done():
+            return // Connection closed, clean exit
+        }
+    }
+})
+```
+
+Handlers only need to block as long as they need to use the context. For quick request/reply handlers, this means they return immediately after sending the response. For subscription-based handlers that send multiple messages over time, they block for as long as the subscription is active. The key rule: don't return from the handler while operations that use the context are still pending.
+
 ### Middleware
 
 Middleware functions execute before handlers in the chain. They can modify the context, perform authentication, log requests, or short-circuit the chain by not calling Next(). Middleware can be applied globally or to specific path patterns.
@@ -978,7 +1023,9 @@ For broadcasting messages to multiple clients or implementing pub/sub patterns a
 - Event Buses: EventBridge, Apache Pulsar
 
 **Pattern:**
-Handlers that need to push events to clients should subscribe to a message queue and block, sending messages as events arrive. The handler must not return to keep the connection alive.
+Handlers that need to push events to clients should subscribe to a message queue and block, sending messages as events arrive.
+
+> **⚠️ Important:** The handler in the example below **must block** and not return. Context objects are pooled and reused - if the handler returns while goroutines or callbacks still reference the context, those operations will fail with errors. The blocking pattern shown here is required, not optional.
 
 ```go
 router.Bind("/notifications/subscribe", func(ctx *velaros.Context) {
@@ -1350,6 +1397,7 @@ router.Bind("/user/profile", func(ctx *velaros.Context) {
 
 **Best Practices:**
 
+- **Handlers must block until all operations complete** - Context objects are pooled and reused. Spawning goroutines or callbacks that reference the context after the handler returns will cause errors (`"context cannot be used after handler returns"`). If your handler needs to send messages over time, it should block in a loop (see broadcasting examples above).
 - Use socket-level storage for shared state (it's thread-safe)
 - Don't assume message execution order
 - Always check `ctx.Done()` in blocking loops to detect connection closure

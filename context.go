@@ -169,6 +169,9 @@ func contextFromPool() *Context {
 }
 
 func (c *Context) free() {
+	if c.message != nil {
+		c.message.free()
+	}
 	contextPool.Put(c)
 }
 
@@ -479,7 +482,9 @@ func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error)
 
 	select {
 	case responseMessage := <-responseMessageChan:
-		return responseMessage.Data, nil
+		data := responseMessage.Data
+		responseMessage.free()
+		return data, nil
 	case <-ctx.Done():
 		return nil, fmt.Errorf("request cancelled: %w", ctx.Err())
 	}
@@ -540,7 +545,9 @@ func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any
 
 	select {
 	case responseMessage := <-responseMessageChan:
-		return c.unmarshalInboundMessage(responseMessage, into)
+		err := c.unmarshalInboundMessage(responseMessage, into)
+		responseMessage.free()
+		return err
 	case <-ctx.Done():
 		return fmt.Errorf("request cancelled: %w", ctx.Err())
 	}
