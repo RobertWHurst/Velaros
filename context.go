@@ -448,7 +448,10 @@ func (c *Context) Request(data any) (any, error) {
 
 // RequestWithTimeout is like Request but allows specifying a custom timeout duration.
 func (c *Context) RequestWithTimeout(data any, timeout time.Duration) (any, error) {
-	ctx, cancel := context.WithTimeout(c, timeout)
+	if c.socket == nil {
+		return nil, errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+	}
+	ctx, cancel := context.WithTimeout(c.socket, timeout)
 	defer cancel()
 	return c.RequestWithContext(ctx, data)
 }
@@ -513,7 +516,10 @@ func (c *Context) RequestInto(data any, into any) error {
 
 // RequestIntoWithTimeout is like RequestInto but allows specifying a custom timeout duration.
 func (c *Context) RequestIntoWithTimeout(data any, into any, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(c, timeout)
+	if c.socket == nil {
+		return errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+	}
+	ctx, cancel := context.WithTimeout(c.socket, timeout)
 	defer cancel()
 	return c.RequestIntoWithContext(ctx, data, into)
 }
