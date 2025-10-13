@@ -170,7 +170,11 @@ func TestRouterServeHTTPNonWebSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HTTP request failed: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if err := resp.Body.Close(); err != nil {
+			t.Errorf("failed to close response body: %v", err)
+		}
+	}()
 
 	// Should get 400 Bad Request for non-WebSocket requests
 	if resp.StatusCode != 400 {

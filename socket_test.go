@@ -117,14 +117,6 @@ func TestSocketHeaders(t *testing.T) {
 			t.Error("expected headers to be non-nil")
 		}
 
-		// WebSocket upgrade should have specific headers
-		upgrade := headers.Get("Upgrade")
-		connection := headers.Get("Connection")
-
-		if upgrade == "" && connection == "" {
-			// Headers might not be set in test environment, that's ok
-		}
-
 		if err := ctx.Send(testMessage{Msg: "headers ok"}); err != nil {
 			t.Errorf("send failed: %v", err)
 		}
