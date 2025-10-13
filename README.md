@@ -84,6 +84,8 @@ func main() {
 
 ## Client Integration
 
+**Note:** This guide uses JSON middleware for examples since it's human-readable and widely understood. Velaros also supports MessagePack (binary) and Protocol Buffers (schema-based). See the [Built-in Middleware](#built-in-middleware) section to learn about all available formats.
+
 ### Connecting from JavaScript/Browser
 
 Velaros uses standard WebSocket protocol, so any WebSocket client can connect. Here's how to connect from a browser:
@@ -233,7 +235,7 @@ Middleware does this by calling `ctx.SetMessagePath()` and `ctx.SetMessageID()`,
 
 Message IDs are required for bidirectional request/reply patterns. When a client sends a message with an ID, handlers can use `Reply()` to send a response with the same ID. When handlers use `Request()` to query the client, the server generates an ID that the client must echo back in their response for proper correlation.
 
-Velaros provides a JSON middleware as a convenient default, but you can create middleware for Protocol Buffers, MessagePack, CBOR, or any other format. You can even use plain text or binary protocols.
+Velaros provides middleware for common formats: **JSON** (human-readable), **MessagePack** (binary, high-performance), and **Protocol Buffers** (schema-based, type-safe). You can also create custom middleware for other formats like CBOR, or even plain text/binary protocols. See the [Built-in Middleware](#built-in-middleware) section for details on each format.
 
 ### Context
 
@@ -499,6 +501,217 @@ router.Bind("/user/create", func(ctx *velaros.Context) {
 
 **Note:** This message structure is specific to the JSON middleware. Velaros itself is format-agnostic - you can create custom middleware for Protocol Buffers, MessagePack, or any other format with different message structures.
 
+### MessagePack Middleware
+
+MessagePack is a binary serialization format that's significantly faster and more compact than JSON. It's ideal for high-throughput systems, mobile applications, and scenarios where bandwidth or performance is critical.
+
+**Why use MessagePack:**
+
+- **5x faster** than JSON for serialization/deserialization
+- **Smaller message sizes** - reduces bandwidth usage
+- **Binary efficiency** - better for mobile and IoT devices
+- **Drop-in replacement** - same API as JSON middleware
+
+**Message Structure:**
+
+MessagePack uses the same envelope structure as JSON (`{id, path, data}`), but encoded in binary format instead of text:
+
+```go
+// MessagePack binary encoding of: {id: "msg-123", path: "/users/get", data: {...}}
+```
+
+**Server-Side Usage:**
+
+```go
+import "github.com/RobertWHurst/velaros/middleware/msgpack"
+
+router := velaros.NewRouter()
+router.Use(msgpack.Middleware())
+
+type UserRequest struct {
+    UserID int64  `msgpack:"user_id"`
+    Name   string `msgpack:"name"`
+}
+
+router.Bind("/users/create", func(ctx *velaros.Context) {
+    var req UserRequest
+    if err := ctx.Unmarshal(&req); err != nil {
+        ctx.Send(ErrorResponse{Error: "invalid data"})
+        return
+    }
+
+    // Process user...
+    ctx.Reply(UserResponse{UserID: req.UserID, Name: req.Name})
+})
+```
+
+**Client-Side Usage (JavaScript):**
+
+Install the MessagePack library: `npm install @msgpack/msgpack`
+
+```javascript
+import { encode, decode } from '@msgpack/msgpack';
+
+const ws = new WebSocket('ws://localhost:8080/ws', 'velaros-msgpack');
+
+ws.binaryType = 'arraybuffer';  // Important: use arraybuffer for binary data
+
+ws.onopen = () => {
+    // Encode message to MessagePack binary
+    const message = {
+        path: '/users/create',
+        id: 'msg-123',
+        user_id: 42,
+        name: 'Alice'
+    };
+    const encoded = encode(message);
+    ws.send(encoded);
+};
+
+ws.onmessage = (event) => {
+    // Decode MessagePack binary to object
+    const message = decode(new Uint8Array(event.data));
+    console.log('Received:', message);
+};
+```
+
+**When to Use:**
+
+- High-frequency trading or real-time systems
+- Mobile apps with limited bandwidth
+- IoT devices with constrained resources
+- Game servers with many concurrent connections
+- Any scenario where JSON performance is a bottleneck
+
+### Protocol Buffers Middleware
+
+Protocol Buffers (protobuf) is Google's language-neutral, platform-neutral serialization format. It provides strong typing, schema validation, and excellent performance with compact binary encoding.
+
+**Why use Protocol Buffers:**
+
+- **Type safety** - Schemas define exact message structure
+- **Language-agnostic** - Use same .proto files across different languages
+- **Efficient binary format** - Smaller and faster than JSON
+- **Schema evolution** - Add fields without breaking existing clients
+- **gRPC compatibility** - Standard format for microservices
+
+**Key Feature:** Work with standard `.proto` files - no Velaros-specific modifications needed. The middleware handles envelope wrapping transparently.
+
+**Complete Workflow:**
+
+**Step 1: Define your `.proto` schema:**
+
+```protobuf
+// user.proto
+syntax = "proto3";
+package myapp;
+option go_package = "github.com/myuser/myapp/proto";
+
+message CreateUserRequest {
+  string username = 1;
+  string email = 2;
+}
+
+message UserResponse {
+  int64 user_id = 1;
+  string username = 2;
+  string email = 3;
+}
+```
+
+**Step 2: Generate Go code:**
+
+```bash
+protoc --go_out=. --go_opt=paths=source_relative user.proto
+```
+
+**Step 3: Use with Velaros (no envelope awareness needed):**
+
+```go
+import (
+    "github.com/RobertWHurst/velaros/middleware/protobuf"
+    pb "github.com/myuser/myapp/proto"
+)
+
+router := velaros.NewRouter()
+router.Use(protobuf.Middleware())
+
+router.Bind("/users/create", func(ctx *velaros.Context) {
+    var req pb.CreateUserRequest
+    if err := ctx.Unmarshal(&req); err != nil {
+        ctx.Send(&pb.ErrorResponse{Error: "invalid data"})
+        return
+    }
+
+    // Process user...
+    ctx.Reply(&pb.UserResponse{
+        UserId:   123,
+        Username: req.Username,
+        Email:    req.Email,
+    })
+})
+```
+
+**How It Works:**
+
+The middleware uses an internal envelope to add routing metadata (`id`, `path`) to your protobuf messages. This envelope is completely transparent - on the server side, you work directly with your generated protobuf types. The middleware handles wrapping and unwrapping automatically.
+
+**Client-Side Usage (JavaScript):**
+
+```javascript
+import protobuf from 'protobufjs';
+
+// Load your .proto definitions
+const root = await protobuf.load('user.proto');
+const CreateUserRequest = root.lookupType('myapp.CreateUserRequest');
+const UserResponse = root.lookupType('myapp.UserResponse');
+
+// Also load Velaros envelope
+const Envelope = root.lookupType('velaros.protobuf.Envelope');
+
+const ws = new WebSocket('ws://localhost:8080/ws', 'velaros-protobuf');
+ws.binaryType = 'arraybuffer';
+
+ws.onopen = () => {
+    // Create your message
+    const req = CreateUserRequest.create({
+        username: 'alice',
+        email: 'alice@example.com'
+    });
+
+    // Wrap in envelope
+    const envelope = Envelope.create({
+        id: 'msg-123',
+        path: '/users/create',
+        data: CreateUserRequest.encode(req).finish()
+    });
+
+    // Send encoded envelope
+    ws.send(Envelope.encode(envelope).finish());
+};
+
+ws.onmessage = (event) => {
+    // Decode envelope
+    const envelope = Envelope.decode(new Uint8Array(event.data));
+
+    // Decode your message from envelope.data
+    const response = UserResponse.decode(envelope.data);
+    console.log('User created:', response.userId);
+};
+```
+
+**When to Use:**
+
+- Microservices architectures
+- Polyglot systems (multiple languages)
+- Type-safe APIs with schema validation
+- Systems requiring backward/forward compatibility
+- Integration with gRPC services
+
+**Path Format:** Use gRPC-style paths like `/package.Service/Method` or custom paths like `/users/create`. Velaros routing works with any path format.
+
+**Learn More:** [Official Protocol Buffers tutorial](https://protobuf.dev/getting-started/gotutorial/)
+
 ### Set Middleware
 
 Provides multiple variants for setting values:
@@ -579,6 +792,7 @@ const ws = new WebSocket('ws://localhost:8080/api/ws');
 
 // Once connected, message paths are internal to the WebSocket:
 // These paths are NOT HTTP paths - they're message routes within the WebSocket
+// Using JSON middleware format for this example:
 ws.send(JSON.stringify({
     path: '/user/profile',  // This is a message path, not an HTTP path
     data: { userId: '123' }
@@ -1429,6 +1643,8 @@ router.Bind("/subscribe/updates", func(ctx *velaros.Context) {
 
 ## Examples
 
+**Note:** These examples use JSON middleware for clarity and simplicity. You can substitute MessagePack or Protocol Buffers middleware depending on your needs.
+
 ### Basic Echo Server
 
 ```go
@@ -1806,7 +2022,7 @@ func TestServerInitiatedRequest(t *testing.T) {
 
 - Use `httptest.NewServer()` to create a test server
 - Use `websocket.Dial()` from `github.com/coder/websocket` to connect
-- Remember to use JSON middleware format: `{"path": "...", "id": "...", "data": {...}}`
+- Match your middleware format in tests (these examples use JSON: `{"path": "...", "id": "...", "data": {...}}`)
 - For lifecycle hooks, add small delays (`time.Sleep`) to allow async operations to complete
 - Test both happy path and error cases
 - Use table-driven tests for testing multiple scenarios
