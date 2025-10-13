@@ -35,11 +35,19 @@ const DefaultRequestTimeout = 5 * time.Second
 //   - Error handling: Error, ErrorStack fields for panic recovery
 type Context struct {
 	parentContext *Context
+	socket        *Socket
+	message       *InboundMessage
+	params        MessageParams
 
-	socket      *Socket
-	message     *InboundMessage
-	params      MessageParams
-	messageType websocket.MessageType
+	currentHandlerNode  *HandlerNode
+	matchingHandlerNode *HandlerNode
+	currentHandler      any
+	associatedValues    map[string]any
+
+	messageUnmarshaler func(message *InboundMessage, into any) error
+	messageMarshaller  func(message *OutboundMessage) ([]byte, error)
+
+	deadline *time.Time
 
 	// Error holds any error that occurred during handler execution, including
 	// errors from panics (automatically recovered). When Error is set, subsequent
@@ -52,17 +60,8 @@ type Context struct {
 	// internal frames removed for clarity.
 	ErrorStack string
 
-	currentHandlerNode  *HandlerNode
-	matchingHandlerNode *HandlerNode
+	messageType         websocket.MessageType
 	currentHandlerIndex int
-	currentHandler      any
-
-	associatedValues map[string]any
-
-	messageUnmarshaler func(message *InboundMessage, into any) error
-	messageMarshaller  func(message *OutboundMessage) ([]byte, error)
-
-	deadline *time.Time
 }
 
 var _ context.Context = &Context{}

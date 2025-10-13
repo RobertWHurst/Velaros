@@ -6,6 +6,11 @@ Velaros implements the standard `http.Handler` interface, so it works seamlessly
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/RobertWHurst/velaros.svg)](https://pkg.go.dev/github.com/RobertWHurst/velaros)
 [![Go Report Card](https://goreportcard.com/badge/github.com/RobertWHurst/velaros)](https://goreportcard.com/report/github.com/RobertWHurst/velaros)
+[![CI](https://github.com/RobertWHurst/Velaros/actions/workflows/ci.yml/badge.svg)](https://github.com/RobertWHurst/Velaros/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/RobertWHurst/d9c059efcefa498e9047b1f7579da3c9/raw/velaros-coverage.json)](https://github.com/RobertWHurst/Velaros/actions/workflows/ci.yml)
+[![GitHub release](https://img.shields.io/github/v/release/RobertWHurst/velaros)](https://github.com/RobertWHurst/velaros/releases)
+[![License](https://img.shields.io/github/license/RobertWHurst/velaros)](LICENSE)
+[![Sponsor](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/RobertWHurst)
 
 ## Table of Contents
 

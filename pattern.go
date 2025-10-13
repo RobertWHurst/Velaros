@@ -199,7 +199,8 @@ func regExpFromPattern(patternStr string) (*regexp.Regexp, error) {
 			currentChunk.pattern = "[^\\/]+"
 		}
 
-		if currentChunk.kind == static || currentChunk.kind == wildcard {
+		switch currentChunk.kind {
+		case static, wildcard:
 			switch currentChunk.modifier {
 			case single:
 				regExpStr += "\\/" + currentChunk.pattern
@@ -210,7 +211,7 @@ func regExpFromPattern(patternStr string) (*regexp.Regexp, error) {
 			case zeroOrMore:
 				regExpStr += "(?:\\/" + currentChunk.pattern + "(?:\\/" + currentChunk.pattern + ")*)?"
 			}
-		} else if currentChunk.kind == dynamic {
+		case dynamic:
 			switch currentChunk.modifier {
 			case single:
 				regExpStr += "\\/(?P<" + currentChunk.key + ">" + currentChunk.pattern + ")"

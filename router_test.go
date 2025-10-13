@@ -83,7 +83,7 @@ func TestRouterSimpleHandler(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/echo", testMessage{Msg: "Hello"})
 	_, response := readMessage(t, conn, ctx)
@@ -110,7 +110,7 @@ func TestRouterMiddleware(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/greet", nil)
 	_, response := readMessage(t, conn, ctx)
@@ -138,7 +138,7 @@ func TestRouterReply(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "request-123", "/echo", testMessage{Msg: "Hello"})
 	id, response := readMessage(t, conn, ctx)
@@ -178,7 +178,7 @@ func TestRouterRequest(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/ping", nil)
 
@@ -228,7 +228,7 @@ func TestRouterRequestInto(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/ping", nil)
 
@@ -273,7 +273,7 @@ func TestRouterRequestWithTimeout(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/timeout-test", nil)
 
@@ -319,7 +319,7 @@ func TestRouterRequestIntoWithTimeout(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/timeout-test", nil)
 
@@ -367,7 +367,7 @@ func TestRouterRequestWithContext(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/cancel-test", nil)
 
@@ -414,7 +414,7 @@ func TestRouterRequestIntoWithContext(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/cancel-test", nil)
 
@@ -468,7 +468,7 @@ func TestRouterUseOpen(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/test", nil)
 	readMessage(t, conn, ctx)
@@ -518,7 +518,7 @@ func TestRouterUseClose(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	conn.Close(websocket.StatusNormalClosure, "")
+	_ = conn.Close(websocket.StatusNormalClosure, "")
 
 	wg.Wait()
 
@@ -561,7 +561,7 @@ func TestRouterUseOpenAndClose(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	conn.Close(websocket.StatusNormalClosure, "")
+	_ = conn.Close(websocket.StatusNormalClosure, "")
 
 	wg.Wait()
 
@@ -626,7 +626,7 @@ func TestRouterMultipleUseOpen(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	msg := []byte(`{"path": "/test"}`)
 	if err := conn.Write(ctx, websocket.MessageText, msg); err != nil {
@@ -662,7 +662,7 @@ func TestContextClose(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/close-me", nil)
 
@@ -695,7 +695,7 @@ func TestContextCloseStopsMessageLoop(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/first", nil)
 	readMessage(t, conn, ctx)
@@ -733,7 +733,7 @@ func TestContextCloseWithStatus(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/close-with-status", nil)
 
@@ -769,7 +769,7 @@ func TestContextStatusDefault(t *testing.T) {
 	})
 
 	conn, ctx := dialWebSocket(t, server.URL)
-	defer conn.Close(websocket.StatusNormalClosure, "")
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	writeMessage(t, conn, ctx, "", "/close-default", nil)
 

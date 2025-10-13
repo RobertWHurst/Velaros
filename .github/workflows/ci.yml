@@ -1,0 +1,79 @@
+name: CI
+
+on:
+  push:
+    branches: master
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Build
+        run: go build -v ./...
+
+      - name: Run Tests
+        run: go test -v ./...
+
+      - name: Run Tests with Race Detector
+        run: go test -race -v ./...
+
+      - name: Run Tests with Coverage
+        run: go test -v -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Generate Coverage Report
+        run: go tool cover -html=coverage.out -o coverage.html
+
+      - name: Upload Coverage Report
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage.html
+          retention-days: 90
+
+      - name: Calculate Coverage Percentage
+        id: coverage
+        run: |
+          coverage=$(go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//')
+          echo "percentage=$coverage" >> $GITHUB_OUTPUT
+          echo "Coverage: $coverage%"
+
+      - name: Update Coverage Badge
+        if: github.ref == 'refs/heads/master'
+        uses: schneegans/dynamic-badges-action@v1.7.0
+        with:
+          auth: ${{ secrets.GIST_SECRET }}
+          gistID: d9c059efcefa498e9047b1f7579da3c9
+          filename: velaros-coverage.json
+          label: coverage
+          message: ${{ steps.coverage.outputs.percentage }}%
+          valColorRange: ${{ steps.coverage.outputs.percentage }}
+          maxColorRange: 100
+          minColorRange: 0

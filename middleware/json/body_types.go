@@ -4,8 +4,9 @@ package json
 // defining JSON objects in a more concise manner.
 type M map[string]any
 
-// If you want to return a JSON wrapped error, you can
-// use this type. The JSON response will be {"error": "your error message"}.
+// Error represents a JSON wrapped error. If you want to return a JSON wrapped
+// error, you can use this type. The JSON response will be
+// {"error": "your error message"}.
 type Error string
 
 // A FieldError can be used as a response body to indicate that a message

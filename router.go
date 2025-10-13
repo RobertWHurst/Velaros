@@ -321,7 +321,7 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 		OriginPatterns: origins,
 	})
 	if err != nil {
-		conn.Close(websocket.StatusInternalError, "failed to accept websocket connection")
+		_ = conn.Close(websocket.StatusInternalError, "failed to accept websocket connection")
 		panic(err)
 	}
 
@@ -333,10 +333,7 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 		openCtx.free()
 	}
 
-	for {
-		if !socket.handleNextMessageWithNode(r.firstHandlerNode) {
-			break
-		}
+	for socket.handleNextMessageWithNode(r.firstHandlerNode) {
 	}
 
 	if r.firstCloseHandlerNode != nil {
@@ -348,5 +345,5 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	socket.closeMx.Lock()
 	defer socket.closeMx.Unlock()
 
-	conn.Close(socket.closeStatus, socket.closeReason)
+	_ = conn.Close(socket.closeStatus, socket.closeReason)
 }
