@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -13,7 +12,20 @@ import (
 	"github.com/google/uuid"
 )
 
-type socket struct {
+// Socket represents a WebSocket connection and manages its lifecycle, message
+// interception, and connection-level storage. It implements the context.Context
+// interface to support cancellation and deadlines.
+//
+// Socket is primarily used internally by the router but is exported to allow
+// advanced use cases and custom integrations. Most users will interact with
+// Socket indirectly through Context methods like SetOnSocket and GetFromSocket.
+//
+// Key responsibilities:
+//   - Connection lifecycle management (open, close, done signaling)
+//   - Thread-safe connection-level value storage
+//   - Message interception for request/reply correlation
+//   - Access to original HTTP upgrade request headers
+type Socket struct {
 	id                 string
 	requestHeaders     http.Header
 	connection         *websocket.Conn
@@ -21,15 +33,21 @@ type socket struct {
 	interceptors       map[string]chan *InboundMessage
 	associatedValuesMx sync.Mutex
 	associatedValues   map[string]any
-	closedMx           sync.Mutex
+	closeMx            sync.Mutex
 	closed             bool
+	closeStatus        Status
+	closeStatusSource  StatusSource
+	closeReason        string
 	doneChan           chan struct{}
 }
 
-var _ context.Context = &socket{}
+var _ context.Context = &Socket{}
 
-func newSocket(requestHeaders http.Header, conn *websocket.Conn) *socket {
-	s := &socket{
+// NewSocket creates a new Socket wrapping a WebSocket connection. This is
+// primarily for internal use by the router. The socket ID is automatically
+// generated and the done channel is initialized.
+func NewSocket(requestHeaders http.Header, conn *websocket.Conn) *Socket {
+	s := &Socket{
 		id:               uuid.NewString(),
 		requestHeaders:   requestHeaders,
 		connection:       conn,
@@ -40,61 +58,66 @@ func newSocket(requestHeaders http.Header, conn *websocket.Conn) *socket {
 	return s
 }
 
-func (s *socket) Deadline() (time.Time, bool) {
+func (s *Socket) Deadline() (time.Time, bool) {
 	return time.Time{}, false
 }
 
-func (s *socket) Done() <-chan struct{} {
+func (s *Socket) Done() <-chan struct{} {
 	return s.doneChan
 }
 
-func (s *socket) Err() error {
-	s.closedMx.Lock()
-	defer s.closedMx.Unlock()
+func (s *Socket) Err() error {
+	s.closeMx.Lock()
+	defer s.closeMx.Unlock()
 	if s.closed {
 		return context.Canceled
 	}
 	return nil
 }
 
-func (s *socket) Value(key any) any {
+func (s *Socket) Value(key any) any {
 	return nil
 }
 
-func (s *socket) close() {
-	s.closedMx.Lock()
-	defer s.closedMx.Unlock()
+func (s *Socket) close(status Status, reason string, source StatusSource) {
+	s.closeMx.Lock()
+	defer s.closeMx.Unlock()
 	if s.closed {
 		return
 	}
+
 	s.closed = true
+	s.closeStatus = status
+	s.closeReason = reason
+	s.closeStatusSource = source
+
 	close(s.doneChan)
 }
 
-func (s *socket) isClosed() bool {
-	s.closedMx.Lock()
-	defer s.closedMx.Unlock()
+func (s *Socket) isClosed() bool {
+	s.closeMx.Lock()
+	defer s.closeMx.Unlock()
 	return s.closed
 }
 
-func (s *socket) send(messageType websocket.MessageType, data []byte) error {
+func (s *Socket) send(messageType websocket.MessageType, data []byte) error {
 	return s.connection.Write(context.Background(), messageType, data)
 }
 
-func (s *socket) set(key string, value any) {
+func (s *Socket) set(key string, value any) {
 	s.associatedValuesMx.Lock()
 	s.associatedValues[key] = value
 	s.associatedValuesMx.Unlock()
 }
 
-func (s *socket) get(key string) (any, bool) {
+func (s *Socket) get(key string) (any, bool) {
 	s.associatedValuesMx.Lock()
 	v, ok := s.associatedValues[key]
 	s.associatedValuesMx.Unlock()
 	return v, ok
 }
 
-func (s *socket) mustGet(key string) any {
+func (s *Socket) mustGet(key string) any {
 	s.associatedValuesMx.Lock()
 	v, ok := s.associatedValues[key]
 	s.associatedValuesMx.Unlock()
@@ -104,11 +127,15 @@ func (s *socket) mustGet(key string) any {
 	return v
 }
 
-func (s *socket) handleNextMessageWithNode(node *HandlerNode) bool {
+func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	msgType, msg, err := s.connection.Read(s)
 	if err != nil {
 		closeStatus := websocket.CloseStatus(err)
-		if closeStatus != -1 || err == io.EOF || errors.Is(err, context.Canceled) {
+		if closeStatus != -1 {
+			s.close(Status(closeStatus), "", StatusSourceClient)
+			return false
+		}
+		if errors.Is(err, context.Canceled) {
 			return false
 		}
 		panic(fmt.Errorf("error reading socket message: %w", err))
@@ -126,7 +153,7 @@ func (s *socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	return true
 }
 
-func (s *socket) getInterceptor(id string) (chan *InboundMessage, bool) {
+func (s *Socket) getInterceptor(id string) (chan *InboundMessage, bool) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
 
@@ -134,14 +161,14 @@ func (s *socket) getInterceptor(id string) (chan *InboundMessage, bool) {
 	return interceptorChan, ok
 }
 
-func (s *socket) addInterceptor(id string, interceptorChan chan *InboundMessage) {
+func (s *Socket) addInterceptor(id string, interceptorChan chan *InboundMessage) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
 
 	s.interceptors[id] = interceptorChan
 }
 
-func (s *socket) removeInterceptor(id string) {
+func (s *Socket) removeInterceptor(id string) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
 

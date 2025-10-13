@@ -708,3 +708,130 @@ func TestContextCloseStopsMessageLoop(t *testing.T) {
 		t.Errorf("expected only 1 message to be received, got %d", messagesReceived)
 	}
 }
+
+func TestContextCloseWithStatus(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	closeChan := make(chan struct {
+		Status velaros.Status
+		Reason string
+		Source velaros.StatusSource
+	}, 1)
+
+	router.Bind("/close-with-status", func(ctx *velaros.Context) {
+		ctx.CloseWithStatus(velaros.StatusGoingAway, "bye bye")
+	})
+
+	router.UseClose(func(ctx *velaros.Context) {
+		status, reason, source := ctx.CloseStatus()
+		closeChan <- struct {
+			Status velaros.Status
+			Reason string
+			Source velaros.StatusSource
+		}{status, reason, source}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "", "/close-with-status", nil)
+
+	select {
+	case closeInfo := <-closeChan:
+		if closeInfo.Status != velaros.StatusGoingAway {
+			t.Errorf("expected StatusGoingAway (1001), got %d", closeInfo.Status)
+		}
+		if closeInfo.Reason != "bye bye" {
+			t.Errorf("expected reason 'bye bye', got %q", closeInfo.Reason)
+		}
+		if closeInfo.Source != velaros.StatusSourceServer {
+			t.Errorf("expected StatusSourceServer, got %d", closeInfo.Source)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("expected UseClose handler to be called")
+	}
+}
+
+func TestContextStatusDefault(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	closeChan := make(chan velaros.Status, 1)
+
+	router.Bind("/close-default", func(ctx *velaros.Context) {
+		ctx.Close() // Should use StatusNormalClosure
+	})
+
+	router.UseClose(func(ctx *velaros.Context) {
+		status, _, _ := ctx.CloseStatus()
+		closeChan <- status
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+
+	writeMessage(t, conn, ctx, "", "/close-default", nil)
+
+	select {
+	case status := <-closeChan:
+		if status != velaros.StatusNormalClosure {
+			t.Errorf("expected StatusNormalClosure (1000), got %d", status)
+		}
+	case <-time.After(10 * time.Second):
+		t.Error("expected UseClose handler to be called")
+	}
+}
+
+func TestClientInitiatedClose(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	closeChan := make(chan struct {
+		Status velaros.Status
+		Reason string
+		Source velaros.StatusSource
+	}, 1)
+
+	router.UseClose(func(ctx *velaros.Context) {
+		status, reason, source := ctx.CloseStatus()
+		closeChan <- struct {
+			Status velaros.Status
+			Reason string
+			Source velaros.StatusSource
+		}{status, reason, source}
+		wg.Done()
+	})
+
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Client closes with StatusGoingAway
+	if err := conn.Close(websocket.StatusGoingAway, "client leaving"); err != nil {
+		t.Fatal(err)
+	}
+
+	wg.Wait()
+
+	select {
+	case closeInfo := <-closeChan:
+		if closeInfo.Status != velaros.StatusGoingAway {
+			t.Errorf("expected StatusGoingAway (1001), got %d", closeInfo.Status)
+		}
+		if closeInfo.Source != velaros.StatusSourceClient {
+			t.Errorf("expected StatusSourceClient, got %d", closeInfo.Source)
+		}
+		// Note: Close reason extraction from error message may not work perfectly
+		// The important part is that UseClose runs and can read the status
+	case <-time.After(10 * time.Second):
+		t.Error("expected UseClose handler to be called after client close")
+	}
+}

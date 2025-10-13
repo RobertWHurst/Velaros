@@ -1,14 +1,45 @@
 package velaros
 
+// InboundMessage represents a message received from a WebSocket client.
+// The structure and interpretation of these fields depends on the middleware
+// in use (typically JSON middleware which populates these fields from the
+// incoming message format).
+//
+// Middleware can modify these fields via Context methods (SetMessageID,
+// SetMessagePath, SetMessageData) to transform messages before they reach handlers.
 type InboundMessage struct {
-	hasSetID   bool
+	// hasSetID tracks whether the ID was modified by middleware, used internally
+	// for routing decisions.
+	hasSetID bool
+
+	// hasSetPath tracks whether the Path was modified by middleware, used internally
+	// for routing decisions.
 	hasSetPath bool
-	ID         string
-	Path       string
-	Data       []byte
+
+	// ID is the message identifier, used for request/reply correlation. If the
+	// incoming message doesn't include an ID, one is automatically generated.
+	ID string
+
+	// Path is the message path used for routing to handlers. Patterns are matched
+	// against this path to determine which handlers should execute.
+	Path string
+
+	// Data contains the raw message payload as bytes. Handlers can unmarshal this
+	// data using ctx.Unmarshal() if middleware has configured an unmarshaler.
+	Data []byte
 }
 
+// OutboundMessage represents a message being sent to a WebSocket client.
+// The marshalling of this structure into bytes is handled by middleware
+// (typically JSON middleware).
 type OutboundMessage struct {
-	ID   string
+	// ID is the message identifier. When set, it enables the client to correlate
+	// this message with a previous request they sent. Used by Reply() to echo back
+	// the client's message ID, and by Request() to generate a new ID for server-initiated
+	// requests.
+	ID string
+
+	// Data is the message payload. This will be marshalled by middleware (typically
+	// to JSON) before being sent over the WebSocket connection.
 	Data any
 }
