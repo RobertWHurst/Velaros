@@ -24,16 +24,16 @@ func setupRouter() (*velaros.Router, *httptest.Server) {
 	return router, server
 }
 
-func dialWebSocket(t *testing.T, serverURL string) (*websocket.Conn, context.Context) {
+func dialWebSocket(tb testing.TB, serverURL string) (*websocket.Conn, context.Context) {
 	ctx := context.Background()
 	conn, _, err := websocket.Dial(ctx, serverURL, nil)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	return conn, ctx
 }
 
-func writeMessage(t *testing.T, conn *websocket.Conn, ctx context.Context, id, path string, data any) {
+func writeMessage(tb testing.TB, conn *websocket.Conn, ctx context.Context, id, path string, data any) {
 	msg := map[string]any{"path": path}
 	if id != "" {
 		msg["id"] = id
@@ -43,24 +43,24 @@ func writeMessage(t *testing.T, conn *websocket.Conn, ctx context.Context, id, p
 	}
 	msgBytes, err := json.Marshal(msg)
 	if err != nil {
-		t.Fatalf("marshal failed: %v", err)
+		tb.Fatalf("marshal failed: %v", err)
 	}
 	if err := conn.Write(ctx, websocket.MessageText, msgBytes); err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 }
 
-func readMessage(t *testing.T, conn *websocket.Conn, ctx context.Context) (id string, data testMessage) {
+func readMessage(tb testing.TB, conn *websocket.Conn, ctx context.Context) (id string, data testMessage) {
 	_, msgBytes, err := conn.Read(ctx)
 	if err != nil {
-		t.Fatal(err)
+		tb.Fatal(err)
 	}
 	var env struct {
 		ID   string      `json:"id"`
 		Data testMessage `json:"data"`
 	}
 	if err := json.Unmarshal(msgBytes, &env); err != nil {
-		t.Fatalf("unmarshal failed: %v, got: %s", err, string(msgBytes))
+		tb.Fatalf("unmarshal failed: %v, got: %s", err, string(msgBytes))
 	}
 	return env.ID, env.Data
 }

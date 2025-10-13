@@ -14,7 +14,6 @@ func TestRouterSetOrigins(t *testing.T) {
 	router := velaros.NewRouter()
 	router.Use(jsonMiddleware.Middleware())
 
-	// Set allowed origins
 	router.SetOrigins([]string{"https://example.com", "https://test.com"})
 
 	router.Bind("/test", func(ctx *velaros.Context) {
@@ -26,7 +25,6 @@ func TestRouterSetOrigins(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	// Test connection (origin validation happens at WebSocket upgrade)
 	conn, ctx := dialWebSocket(t, server.URL)
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
@@ -42,8 +40,6 @@ func TestRouterMiddlewareReturnsFunction(t *testing.T) {
 	router := velaros.NewRouter()
 	router.Use(jsonMiddleware.Middleware())
 
-	// Middleware() returns a Navaros HandlerFunc
-	// We can test that it exists and is callable
 	middlewareFunc := router.Middleware()
 
 	if middlewareFunc == nil {
@@ -55,7 +51,6 @@ func TestRouterPublicBind(t *testing.T) {
 	router := velaros.NewRouter()
 	router.Use(jsonMiddleware.Middleware())
 
-	// PublicBind makes a route publicly discoverable
 	router.PublicBind("/api/users", func(ctx *velaros.Context) {
 		if err := ctx.Send(testMessage{Msg: "users list"}); err != nil {
 			t.Errorf("send failed: %v", err)
@@ -68,7 +63,6 @@ func TestRouterPublicBind(t *testing.T) {
 		}
 	})
 
-	// Regular Bind should not be in public route descriptors
 	router.Bind("/internal/admin", func(ctx *velaros.Context) {
 		if err := ctx.Send(testMessage{Msg: "admin"}); err != nil {
 			t.Errorf("send failed: %v", err)
@@ -78,7 +72,6 @@ func TestRouterPublicBind(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	// Test the public routes work
 	conn, ctx := dialWebSocket(t, server.URL)
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
@@ -89,7 +82,6 @@ func TestRouterPublicBind(t *testing.T) {
 		t.Errorf("expected 'users list', got %q", response.Msg)
 	}
 
-	// Test route with param
 	writeMessage(t, conn, ctx, "", "/api/posts/123", nil)
 	_, response2 := readMessage(t, conn, ctx)
 
@@ -102,7 +94,6 @@ func TestRouterRouteDescriptors(t *testing.T) {
 	router := velaros.NewRouter()
 	router.Use(jsonMiddleware.Middleware())
 
-	// Add public routes
 	router.PublicBind("/api/users", func(ctx *velaros.Context) {
 		if err := ctx.Send(testMessage{Msg: "users"}); err != nil {
 			t.Errorf("send failed: %v", err)
@@ -115,21 +106,18 @@ func TestRouterRouteDescriptors(t *testing.T) {
 		}
 	})
 
-	// Add non-public route
 	router.Bind("/internal", func(ctx *velaros.Context) {
 		if err := ctx.Send(testMessage{Msg: "internal"}); err != nil {
 			t.Errorf("send failed: %v", err)
 		}
 	})
 
-	// Get route descriptors
 	descriptors := router.RouteDescriptors()
 
 	if len(descriptors) != 2 {
 		t.Errorf("expected 2 public route descriptors, got %d", len(descriptors))
 	}
 
-	// Check descriptors content
 	foundUsers := false
 	foundPosts := false
 
@@ -165,7 +153,6 @@ func TestRouterServeHTTPNonWebSocket(t *testing.T) {
 	server := httptest.NewServer(router)
 	defer server.Close()
 
-	// Make a regular HTTP request (not WebSocket upgrade)
 	resp, err := http.Get(server.URL + "/ws")
 	if err != nil {
 		t.Fatalf("HTTP request failed: %v", err)
@@ -176,7 +163,6 @@ func TestRouterServeHTTPNonWebSocket(t *testing.T) {
 		}
 	}()
 
-	// Should get 400 Bad Request for non-WebSocket requests
 	if resp.StatusCode != 400 {
 		t.Errorf("expected status 400 for non-WebSocket request, got %d", resp.StatusCode)
 	}

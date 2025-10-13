@@ -38,10 +38,8 @@ func TestSocketMustGet(t *testing.T) {
 
 	t.Run("MustGetFromSocket with non-existent key panics", func(t *testing.T) {
 		router.Bind("/socket-must-get-missing", func(ctx *velaros.Context) {
-			// The panic will be caught by the framework's panic recovery
 			_ = ctx.MustGetFromSocket("nonexistent")
 
-			// This should not execute if panic occurred
 			if err := ctx.Send(testMessage{Msg: "should not reach"}); err != nil {
 				t.Errorf("send failed: %v", err)
 			}
@@ -51,9 +49,6 @@ func TestSocketMustGet(t *testing.T) {
 		defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 		writeMessage(t, conn, ctx, "", "/socket-must-get-missing", nil)
-
-		// The framework's panic recovery will catch this,
-		// so we're testing that the panic doesn't crash the server
 	})
 }
 
@@ -80,7 +75,6 @@ func TestSocketID(t *testing.T) {
 		}
 	})
 
-	// First connection
 	conn1, ctx1 := dialWebSocket(t, server.URL)
 	defer func() { _ = conn1.Close(websocket.StatusNormalClosure, "") }()
 
@@ -91,7 +85,6 @@ func TestSocketID(t *testing.T) {
 		t.Error("expected socket ID in response")
 	}
 
-	// Second connection (should have different ID)
 	conn2, ctx2 := dialWebSocket(t, server.URL)
 	defer func() { _ = conn2.Close(websocket.StatusNormalClosure, "") }()
 
@@ -138,18 +131,15 @@ func TestSocketStorageThreadSafety(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/concurrent-socket-storage", func(ctx *velaros.Context) {
-		// Set multiple values rapidly
 		for i := 0; i < 100; i++ {
 			ctx.SetOnSocket("key", i)
 		}
 
-		// Read value
 		val, ok := ctx.GetFromSocket("key")
 		if !ok {
 			t.Error("expected key to exist")
 		}
 
-		// Value should be some integer (exact value doesn't matter due to race)
 		if _, isInt := val.(int); !isInt {
 			t.Errorf("expected int value, got %T", val)
 		}
@@ -177,12 +167,10 @@ func TestSocketContextCancellation(t *testing.T) {
 	doneChan := make(chan struct{})
 
 	router.Bind("/check-socket-done", func(ctx *velaros.Context) {
-		// Socket's Done channel should not be closed during handler
 		select {
 		case <-ctx.Done():
 			t.Error("expected socket context not to be done during handler")
 		default:
-			// Good
 		}
 
 		if err := ctx.Send(testMessage{Msg: "not done"}); err != nil {
@@ -200,9 +188,6 @@ func TestSocketContextCancellation(t *testing.T) {
 		t.Errorf("expected 'not done', got %q", response.Msg)
 	}
 
-	// Wait for handler to complete
 	<-doneChan
-
-	// Now close the connection
 	_ = conn.Close(websocket.StatusNormalClosure, "test complete")
 }

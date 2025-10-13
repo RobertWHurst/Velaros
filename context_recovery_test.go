@@ -24,14 +24,11 @@ func TestPanicRecoveryInHandler(t *testing.T) {
 	conn, ctx := dialWebSocket(t, server.URL)
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
-	// Send message to panic handler
 	msg := []byte(`{"path": "/panic"}`)
 	if err := conn.Write(ctx, websocket.MessageText, msg); err != nil {
 		t.Fatal(err)
 	}
 
-	// Connection should still be alive after panic
-	// Try to send another message to verify
 	msg2 := []byte(`{"path": "/panic"}`)
 	if err := conn.Write(ctx, websocket.MessageText, msg2); err != nil {
 		t.Error("connection died after panic - expected it to stay alive")
@@ -73,7 +70,6 @@ func TestPanicRecoveryInMiddleware(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Give it a moment to process
 	time.Sleep(50 * time.Millisecond)
 
 	mu.Lock()
@@ -106,7 +102,6 @@ func TestPanicRecoveryMultiplePanics(t *testing.T) {
 	conn, ctx := dialWebSocket(t, server.URL)
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
-	// Send multiple messages that will panic - server should handle all gracefully
 	for i := 0; i < 3; i++ {
 		msg := []byte(`{"path": "/panic-multiple"}`)
 		if err := conn.Write(ctx, websocket.MessageText, msg); err != nil {
@@ -139,7 +134,6 @@ func TestPanicRecoveryDoesNotAffectOtherHandlers(t *testing.T) {
 	conn, ctx := dialWebSocket(t, server.URL)
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
-	// First, trigger panic
 	msg1 := []byte(`{"path": "/panic"}`)
 	if err := conn.Write(ctx, websocket.MessageText, msg1); err != nil {
 		t.Fatal(err)
@@ -147,13 +141,11 @@ func TestPanicRecoveryDoesNotAffectOtherHandlers(t *testing.T) {
 
 	time.Sleep(50 * time.Millisecond)
 
-	// Now call good handler - should work fine
 	msg2 := []byte(`{"path": "/good"}`)
 	if err := conn.Write(ctx, websocket.MessageText, msg2); err != nil {
 		t.Fatal(err)
 	}
 
-	// Read response
 	_, msgBytes, err := conn.Read(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -279,10 +271,8 @@ func TestPanicWithDifferentTypes(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			// Connection should still be alive
 			time.Sleep(50 * time.Millisecond)
 
-			// Verify we can still send messages
 			msg2 := []byte(`{"path": "/panic-type"}`)
 			if err := conn.Write(ctx, websocket.MessageText, msg2); err != nil {
 				t.Error("connection died after panic")

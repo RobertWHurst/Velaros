@@ -14,7 +14,6 @@ func TestContextGetSet(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/get-set", func(ctx *velaros.Context) {
-		// Test Set and Get
 		ctx.Set("key1", "value1")
 		ctx.Set("key2", 42)
 		ctx.Set("key3", struct{ Name string }{Name: "test"})
@@ -34,7 +33,6 @@ func TestContextGetSet(t *testing.T) {
 			t.Error("expected key3 to exist")
 		}
 
-		// Test non-existent key
 		_, ok := ctx.Get("nonexistent")
 		if ok {
 			t.Error("expected non-existent key to return false")
@@ -109,7 +107,6 @@ func TestContextMustGet(t *testing.T) {
 
 		select {
 		case <-panicked:
-			// Good - panic was caught
 		case <-time.After(100 * time.Millisecond):
 			t.Error("expected MustGet to panic for non-existent key")
 		}
@@ -121,11 +118,9 @@ func TestContextGetFromSocketSetOnSocket(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/socket-storage", func(ctx *velaros.Context) {
-		// Set value on socket
 		ctx.SetOnSocket("connection-id", "conn-123")
 		ctx.SetOnSocket("user", "alice")
 
-		// Get value from socket
 		val1, ok1 := ctx.GetFromSocket("connection-id")
 		if !ok1 || val1 != "conn-123" {
 			t.Errorf("expected connection-id='conn-123', got ok=%v, val=%v", ok1, val1)
@@ -136,7 +131,6 @@ func TestContextGetFromSocketSetOnSocket(t *testing.T) {
 			t.Errorf("expected user='alice', got ok=%v, val=%v", ok2, val2)
 		}
 
-		// Test non-existent key
 		_, ok := ctx.GetFromSocket("nonexistent")
 		if ok {
 			t.Error("expected non-existent socket key to return false")
@@ -185,14 +179,12 @@ func TestContextSocketStoragePersistence(t *testing.T) {
 	conn, ctx := dialWebSocket(t, server.URL)
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
-	// First message: set value
 	writeMessage(t, conn, ctx, "", "/set-socket-val", nil)
 	_, response1 := readMessage(t, conn, ctx)
 	if response1.Msg != "set" {
 		t.Errorf("expected 'set', got %q", response1.Msg)
 	}
 
-	// Second message: get value (should persist across messages)
 	writeMessage(t, conn, ctx, "", "/get-socket-val", nil)
 	_, response2 := readMessage(t, conn, ctx)
 	if response2.Msg != "got" {
@@ -242,7 +234,6 @@ func TestContextDeadline(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/deadline-test", func(ctx *velaros.Context) {
-		// Default context has no deadline
 		_, ok := ctx.Deadline()
 		if ok {
 			t.Error("expected no deadline on default context")
@@ -269,7 +260,6 @@ func TestContextErr(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/err-test", func(ctx *velaros.Context) {
-		// Context should not be canceled during handler execution
 		if ctx.Err() != nil {
 			t.Errorf("expected no error, got %v", ctx.Err())
 		}
@@ -295,8 +285,6 @@ func TestContextValue(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/value-test", func(ctx *velaros.Context) {
-		// Context.Value should return nil for any key
-		// (it's a stub implementation for go context.Context interface)
 		val := ctx.Value("somekey")
 		if val != nil {
 			t.Errorf("expected nil, got %v", val)
@@ -323,12 +311,10 @@ func TestContextDone(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/done-test", func(ctx *velaros.Context) {
-		// Done channel should not be closed during handler execution
 		select {
 		case <-ctx.Done():
 			t.Error("expected Done channel to be open during handler execution")
 		default:
-			// Good - not done yet
 		}
 
 		if err := ctx.Send(testMessage{Msg: "not done"}); err != nil {
@@ -352,23 +338,18 @@ func TestContextCanBeUsedWithGoContextFunctions(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/go-context-test", func(ctx *velaros.Context) {
-		// This tests that our Context properly implements context.Context
-		// and can be used with standard library context functions
 		derivedCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 		defer cancel()
 
-		// Derived context should have a deadline
 		_, ok := derivedCtx.Deadline()
 		if !ok {
 			t.Error("expected derived context to have a deadline")
 		}
 
-		// Derived context should not be done yet
 		select {
 		case <-derivedCtx.Done():
 			t.Error("expected derived context not to be done yet")
 		default:
-			// Good
 		}
 
 		if err := ctx.Send(testMessage{Msg: "go context works"}); err != nil {
