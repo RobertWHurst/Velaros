@@ -38,16 +38,20 @@ type Context struct {
 	socket        *Socket
 	message       *InboundMessage
 	params        MessageParams
-
-	currentHandlerNode  *HandlerNode
-	matchingHandlerNode *HandlerNode
-	currentHandler      any
-	associatedValues    map[string]any
+	messageType   websocket.MessageType
 
 	messageUnmarshaler func(message *InboundMessage, into any) error
 	messageMarshaller  func(message *OutboundMessage) ([]byte, error)
 
-	deadline *time.Time
+	currentHandlerNode  *HandlerNode
+	matchingHandlerNode *HandlerNode
+	associatedValues    map[string]any
+	currentHandlerIndex int
+
+	currentHandler any
+
+	ctx       context.Context
+	cancelCtx context.CancelFunc
 
 	// Error holds any error that occurred during handler execution, including
 	// errors from panics (automatically recovered). When Error is set, subsequent
@@ -59,9 +63,6 @@ type Context struct {
 	// useful for debugging and logging. The stack trace has the framework's
 	// internal frames removed for clarity.
 	ErrorStack string
-
-	messageType         websocket.MessageType
-	currentHandlerIndex int
 }
 
 var _ context.Context = &Context{}
@@ -84,6 +85,7 @@ func NewContextWithNode(socket *Socket, message *InboundMessage, firstHandlerNod
 // not call this directly.
 func NewContextWithNodeAndMessageType(socket *Socket, message *InboundMessage, firstHandlerNode *HandlerNode, messageType websocket.MessageType) *Context {
 	ctx := contextFromPool()
+	ctx.ctx, ctx.cancelCtx = context.WithCancel(socket)
 
 	if message.ID == "" {
 		message.ID = uuid.NewString()
@@ -103,6 +105,7 @@ func NewContextWithNodeAndMessageType(socket *Socket, message *InboundMessage, f
 // not call this directly.
 func NewSubContextWithNode(ctx *Context, firstHandlerNode *HandlerNode) *Context {
 	subCtx := contextFromPool()
+	subCtx.ctx, subCtx.cancelCtx = context.WithCancel(ctx)
 
 	subCtx.parentContext = ctx
 
@@ -137,40 +140,40 @@ var contextPool = sync.Pool{
 }
 
 func contextFromPool() *Context {
-	ctx := contextPool.Get().(*Context)
-
-	ctx.parentContext = nil
-
-	ctx.socket = nil
-	ctx.message = nil
-	ctx.messageType = 0
-
-	for k := range ctx.params {
-		delete(ctx.params, k)
-	}
-
-	ctx.Error = nil
-	ctx.ErrorStack = ""
-
-	ctx.messageUnmarshaler = nil
-	ctx.messageMarshaller = nil
-
-	ctx.currentHandlerNode = nil
-	ctx.matchingHandlerNode = nil
-	ctx.currentHandlerIndex = 0
-	ctx.currentHandler = nil
-
-	for k := range ctx.associatedValues {
-		delete(ctx.associatedValues, k)
-	}
-
-	return ctx
+	return contextPool.Get().(*Context)
 }
 
 func (c *Context) free() {
 	if c.message != nil {
 		c.message.free()
 	}
+	c.cancelCtx()
+
+	c.parentContext = nil
+
+	c.socket = nil
+	c.message = nil
+	c.messageType = 0
+
+	for k := range c.params {
+		delete(c.params, k)
+	}
+
+	c.Error = nil
+	c.ErrorStack = ""
+
+	c.messageUnmarshaler = nil
+	c.messageMarshaller = nil
+
+	c.currentHandlerNode = nil
+	c.matchingHandlerNode = nil
+	c.currentHandlerIndex = 0
+	c.currentHandler = nil
+
+	for k := range c.associatedValues {
+		delete(c.associatedValues, k)
+	}
+
 	contextPool.Put(c)
 }
 
@@ -451,7 +454,7 @@ func (c *Context) RequestWithTimeout(data any, timeout time.Duration) (any, erro
 	if c.socket == nil {
 		return nil, errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
 	}
-	ctx, cancel := context.WithTimeout(c.socket, timeout)
+	ctx, cancel := context.WithTimeout(c.ctx, timeout)
 	defer cancel()
 	return c.RequestWithContext(ctx, data)
 }
@@ -519,7 +522,7 @@ func (c *Context) RequestIntoWithTimeout(data any, into any, timeout time.Durati
 	if c.socket == nil {
 		return errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
 	}
-	ctx, cancel := context.WithTimeout(c.socket, timeout)
+	ctx, cancel := context.WithTimeout(c.ctx, timeout)
 	defer cancel()
 	return c.RequestIntoWithContext(ctx, data, into)
 }
@@ -629,44 +632,18 @@ func (c *Context) marshallOutboundMessage(message *OutboundMessage) ([]byte, err
 	return c.messageMarshaller(message)
 }
 
-// Deadline returns the deadline of the request. Deadline is part of the go
-// context.Context interface.
 func (c *Context) Deadline() (time.Time, bool) {
-	ok := c.deadline != nil
-	deadline := time.Time{}
-	if ok {
-		deadline = *c.deadline
-	}
-	return deadline, ok
+	return c.ctx.Deadline()
 }
 
-// Done returns a channel that closes when the socket connection is closed.
-// Done is part of the go context.Context interface.
 func (c *Context) Done() <-chan struct{} {
-	if c.socket == nil {
-		closed := make(chan struct{})
-		close(closed)
-		return closed
-	}
-	return c.socket.Done()
+	return c.ctx.Done()
 }
 
-// Err returns an error if the context is cancelled or the connection is closed.
-// This is part of the go context.Context interface. Returns the handler Error
-// if set, otherwise returns the socket error (context.Canceled if closed).
 func (c *Context) Err() error {
-	if c.Error != nil {
-		return c.Error
-	}
-	if c.socket == nil {
-		return context.Canceled
-	}
-	return c.socket.Err()
+	return c.ctx.Err()
 }
 
-// Value is a no-op for compatibility with go's context.Context interface.
-// Use Set/Get for per-message values or SetOnSocket/GetFromSocket for
-// per-connection values instead.
-func (c *Context) Value(any) any {
-	return nil
+func (c *Context) Value(v any) any {
+	return c.ctx.Value(v)
 }

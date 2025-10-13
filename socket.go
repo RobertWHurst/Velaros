@@ -38,7 +38,8 @@ type Socket struct {
 	closeStatus        Status
 	closeStatusSource  StatusSource
 	closeReason        string
-	doneChan           chan struct{}
+	ctx                context.Context
+	cancelCtx          context.CancelFunc
 }
 
 var _ context.Context = &Socket{}
@@ -53,30 +54,25 @@ func NewSocket(requestHeaders http.Header, conn *websocket.Conn) *Socket {
 		connection:       conn,
 		interceptors:     map[string]chan *InboundMessage{},
 		associatedValues: map[string]any{},
-		doneChan:         make(chan struct{}),
 	}
+	s.ctx, s.cancelCtx = context.WithCancel(context.Background())
 	return s
 }
 
 func (s *Socket) Deadline() (time.Time, bool) {
-	return time.Time{}, false
+	return s.ctx.Deadline()
 }
 
 func (s *Socket) Done() <-chan struct{} {
-	return s.doneChan
+	return s.ctx.Done()
 }
 
 func (s *Socket) Err() error {
-	s.closeMx.Lock()
-	defer s.closeMx.Unlock()
-	if s.closed {
-		return context.Canceled
-	}
-	return nil
+	return s.ctx.Err()
 }
 
 func (s *Socket) Value(key any) any {
-	return nil
+	return s.ctx.Value(key)
 }
 
 func (s *Socket) close(status Status, reason string, source StatusSource) {
@@ -91,7 +87,7 @@ func (s *Socket) close(status Status, reason string, source StatusSource) {
 	s.closeReason = reason
 	s.closeStatusSource = source
 
-	close(s.doneChan)
+	s.cancelCtx()
 }
 
 func (s *Socket) isClosed() bool {

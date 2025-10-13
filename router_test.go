@@ -353,7 +353,7 @@ func TestRouterRequestWithContext(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/cancel-test", func(ctx *velaros.Context) {
-		cancelCtx, cancel := context.WithCancel(ctx)
+		cancelCtx, cancel := context.WithCancel(context.Background())
 		cancel()
 
 		_, err := ctx.RequestWithContext(cancelCtx, testMessage{Msg: "Ping"})
