@@ -207,6 +207,9 @@ func (c *Context) Next() {
 //	ctx.SetOnSocket("userID", "12345")
 //	ctx.SetOnSocket("authenticated", true)
 func (c *Context) SetOnSocket(key string, value any) {
+	if c.socket == nil {
+		return
+	}
 	c.socket.set(key, value)
 }
 
@@ -215,12 +218,18 @@ func (c *Context) SetOnSocket(key string, value any) {
 // This is thread-safe and can be called from handlers processing different
 // messages concurrently on the same connection.
 func (c *Context) GetFromSocket(key string) (any, bool) {
+	if c.socket == nil {
+		return nil, false
+	}
 	return c.socket.get(key)
 }
 
 // MustGetFromSocket retrieves a value stored at the socket/connection level.
 // Panics if the key is not found. Use this when the value is expected to exist.
 func (c *Context) MustGetFromSocket(key string) any {
+	if c.socket == nil {
+		panic("context cannot be used after handler returns - handlers must block until all operations complete")
+	}
 	return c.socket.mustGet(key)
 }
 
@@ -258,6 +267,9 @@ func (c *Context) MustGet(key string) any {
 // The ID is generated when the connection is established and remains constant
 // for the connection's lifetime.
 func (c *Context) SocketID() string {
+	if c.socket == nil {
+		return ""
+	}
 	return c.socket.id
 }
 
@@ -290,6 +302,9 @@ func (c *Context) Path() string {
 //	token := ctx.Headers().Get("Authorization")
 //	cookie, _ := (&http.Request{Header: ctx.Headers()}).Cookie("session")
 func (c *Context) Headers() http.Header {
+	if c.socket == nil {
+		return nil
+	}
 	return c.socket.requestHeaders
 }
 
@@ -371,6 +386,9 @@ func (c *Context) SetMessageData(data []byte) {
 //
 //	ctx.Send(NotificationMessage{Type: "user_online", UserID: "123"})
 func (c *Context) Send(data any) error {
+	if c.socket == nil {
+		return errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+	}
 	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
 		Data: data,
 	})
@@ -392,6 +410,9 @@ func (c *Context) Send(data any) error {
 //	user := getUser(req.UserID)
 //	ctx.Reply(GetUserResponse{User: user})
 func (c *Context) Reply(data any) error {
+	if c.socket == nil {
+		return errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+	}
 	if c.MessageID() == "" {
 		return errors.New("cannot reply to a message without an ID")
 	}
@@ -434,6 +455,9 @@ func (c *Context) RequestWithTimeout(data any, timeout time.Duration) (any, erro
 // This allows integration with Go's context patterns for request cancellation,
 // deadlines, and value propagation.
 func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error) {
+	if c.socket == nil {
+		return nil, errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+	}
 	id := uuid.NewString()
 
 	responseMessageChan := make(chan *InboundMessage, 1)
@@ -492,6 +516,9 @@ func (c *Context) RequestIntoWithTimeout(data any, into any, timeout time.Durati
 
 // RequestIntoWithContext is like RequestInto but accepts a custom context for cancellation.
 func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any) error {
+	if c.socket == nil {
+		return errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+	}
 	id := uuid.NewString()
 
 	responseMessageChan := make(chan *InboundMessage, 1)
@@ -524,6 +551,9 @@ func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any
 // messages can be sent or received. UseClose handlers will still execute
 // before the connection is fully closed.
 func (c *Context) Close() {
+	if c.socket == nil {
+		return
+	}
 	c.socket.close(StatusNormalClosure, "", StatusSourceServer)
 }
 
@@ -541,6 +571,9 @@ func (c *Context) Close() {
 //
 //	ctx.CloseWithStatus(StatusPolicyViolation, "Rate limit exceeded")
 func (c *Context) CloseWithStatus(status Status, reason string) {
+	if c.socket == nil {
+		return
+	}
 	c.socket.close(status, reason, StatusSourceServer)
 }
 
@@ -562,6 +595,9 @@ func (c *Context) CloseWithStatus(status Status, reason string) {
 //	    }
 //	})
 func (c *Context) CloseStatus() (Status, string, StatusSource) {
+	if c.socket == nil {
+		return 0, "", 0
+	}
 	c.socket.closeMx.Lock()
 	defer c.socket.closeMx.Unlock()
 	return c.socket.closeStatus, c.socket.closeReason, c.socket.closeStatusSource
@@ -595,6 +631,11 @@ func (c *Context) Deadline() (time.Time, bool) {
 // Done returns a channel that closes when the socket connection is closed.
 // Done is part of the go context.Context interface.
 func (c *Context) Done() <-chan struct{} {
+	if c.socket == nil {
+		closed := make(chan struct{})
+		close(closed)
+		return closed
+	}
 	return c.socket.Done()
 }
 
@@ -604,6 +645,9 @@ func (c *Context) Done() <-chan struct{} {
 func (c *Context) Err() error {
 	if c.Error != nil {
 		return c.Error
+	}
+	if c.socket == nil {
+		return context.Canceled
 	}
 	return c.socket.Err()
 }
