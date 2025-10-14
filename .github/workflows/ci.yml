@@ -44,7 +44,10 @@ jobs:
         run: go test -race -v ./...
 
       - name: Run Tests with Coverage
-        run: go test -v -coverprofile=coverage.out -covermode=atomic ./...
+        run: |
+          go test -v -coverprofile=coverage.out -covermode=atomic ./...
+          grep -v '\.pb\.go:' coverage.out > coverage_filtered.out
+          mv coverage_filtered.out coverage.out
 
       - name: Generate Coverage Report
         run: go tool cover -html=coverage.out -o coverage.html
