@@ -70,7 +70,7 @@ jobs:
         if: github.ref == 'refs/heads/master'
         uses: schneegans/dynamic-badges-action@v1.7.0
         with:
-          auth: ${{ secrets.GIST_SECRET }}
+          auth: ${{ secrets.COVERAGE_GIST_TOKEN }}
           gistID: d9c059efcefa498e9047b1f7579da3c9
           filename: velaros-coverage.json
           label: coverage
