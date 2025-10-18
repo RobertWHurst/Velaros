@@ -45,6 +45,7 @@ Velaros implements the standard `http.Handler` interface, so it works seamlessly
 - [Architecture](#architecture)
 - [Examples](#examples)
 - [Testing](#testing)
+- [Need HTTP Routing? Check Out Navaros](#need-http-routing-check-out-navaros)
 - [Help Welcome](#help-welcome)
 - [License](#license)
 - [Related Projects](#related-projects)
@@ -2160,6 +2161,167 @@ func TestServerInitiatedRequest(t *testing.T) {
 - For lifecycle hooks, add small delays (`time.Sleep`) to allow async operations to complete
 - Test both happy path and error cases
 - Use table-driven tests for testing multiple scenarios
+
+## Need HTTP Routing? Check Out Navaros
+
+If you're building applications with both HTTP endpoints and WebSocket connections, **[Navaros](https://github.com/RobertWHurst/Navaros)** is Velaros' companion HTTP router. Both frameworks share the same routing pattern syntax and middleware philosophy, making it easy to use them together in the same application.
+
+### Why Use Both?
+
+Modern applications often need both request/response (HTTP) and real-time (WebSocket) communication:
+
+- **HTTP for traditional APIs** - REST endpoints, webhooks, health checks
+- **WebSocket for real-time features** - Live updates, chat, notifications, collaborative editing
+
+Using Velaros and Navaros together gives you a consistent API design across both protocols:
+
+```go
+package main
+
+import (
+    "net/http"
+    "github.com/RobertWHurst/navaros"
+    "github.com/RobertWHurst/velaros"
+    navJSON "github.com/RobertWHurst/navaros/middleware/json"
+    velJSON "github.com/RobertWHurst/velaros/middleware/json"
+)
+
+func main() {
+    // HTTP Router with Navaros
+    httpRouter := navaros.NewRouter()
+    httpRouter.Use(navJSON.Middleware(nil))
+    
+    // REST endpoint for getting user profile
+    httpRouter.Get("/api/users/:id", func(ctx *navaros.Context) {
+        userID := ctx.Params()["id"]
+        user := getUserByID(userID)
+        ctx.Status = http.StatusOK
+        ctx.Body = user
+    })
+    
+    // WebSocket Router with Velaros
+    wsRouter := velaros.NewRouter()
+    wsRouter.Use(velJSON.Middleware())
+    
+    // Real-time updates for user status
+    wsRouter.Bind("/users/:id/status", func(ctx *velaros.Context) {
+        userID := ctx.Params().Get("id")
+        
+        // Subscribe to status changes
+        subscription := statusUpdates.Subscribe(userID)
+        defer subscription.Unsubscribe()
+        
+        ctx.Reply(SubscribeResponse{Status: "subscribed"})
+        
+        // Stream updates in real-time
+        for {
+            select {
+            case update := <-subscription.Updates():
+                ctx.Send(StatusUpdate{UserID: userID, Status: update})
+            case <-ctx.Done():
+                return
+            }
+        }
+    })
+    
+    // Mount both routers on the same server
+    http.Handle("/api/", httpRouter)
+    http.Handle("/ws", wsRouter)
+    
+    http.ListenAndServe(":8080", nil)
+}
+```
+
+### Shared Design Philosophy
+
+Both routers use identical pattern syntax and middleware concepts:
+
+**Pattern Matching:**
+```go
+// Both support the same route patterns
+"/users/:id"              // Named parameter
+"/files/**"              // Wildcard
+"/users/:id(\\d+)"       // Regex constraint
+"/posts/:slug?"          // Optional segment
+```
+
+**Middleware Chain:**
+```go
+// Same middleware pattern in both routers
+router.Use(func(ctx *Context) {
+    // Pre-processing
+    ctx.Next()
+    // Post-processing
+})
+```
+
+**Context-Based API:**
+```go
+// Navaros HTTP context
+httpRouter.Get("/users/:id", func(ctx *navaros.Context) {
+    id := ctx.Params()["id"]
+    ctx.Status = http.StatusOK
+    ctx.Body = getUserByID(id)
+})
+
+// Velaros WebSocket context
+wsRouter.Bind("/users/:id", func(ctx *velaros.Context) {
+    id := ctx.Params().Get("id")
+    ctx.Reply(getUserByID(id))
+})
+```
+
+### Key Differences
+
+While the API is similar, each router is optimized for its protocol:
+
+| Feature | Navaros (HTTP) | Velaros (WebSocket) |
+|---------|---------------|---------------------|
+| **Connection** | Request/response | Persistent bidirectional |
+| **State** | Stateless per-request | Stateful per-connection |
+| **Communication** | Client→Server only | Client↔Server bidirectional |
+| **Storage** | Per-request context | Per-message + per-connection |
+| **Methods** | GET, POST, PUT, etc. | Path-based routing only |
+| **Body** | `ctx.Body` field | `ctx.Send()` / `ctx.Reply()` |
+
+### Common Use Cases
+
+**Navaros handles:**
+- REST API endpoints
+- Static file serving
+- Form submissions
+- Webhooks
+- Health checks
+- OAuth callbacks
+
+**Velaros handles:**
+- Live dashboards
+- Chat applications
+- Real-time notifications
+- Collaborative editing
+- Game servers
+- Live data streaming
+
+### Example: Chat Application
+
+```go
+// HTTP endpoints for user management
+httpRouter.Post("/api/register", registerUser)
+httpRouter.Post("/api/login", loginUser)
+httpRouter.Get("/api/rooms", listChatRooms)
+
+// WebSocket for real-time chat
+wsRouter.Bind("/chat/:room/join", joinChatRoom)
+wsRouter.Bind("/chat/:room/message", sendMessage)
+wsRouter.Bind("/chat/:room/typing", broadcastTyping)
+```
+
+### Learn More
+
+- **Navaros Repository:** [github.com/RobertWHurst/Navaros](https://github.com/RobertWHurst/Navaros)
+- **Navaros Documentation:** [pkg.go.dev/github.com/RobertWHurst/navaros](https://pkg.go.dev/github.com/RobertWHurst/navaros)
+
+Both routers are lightweight, high-performance, and have zero external dependencies beyond the Go standard library (except for middleware packages which use appropriate serialization libraries).
 
 ## Help Welcome
 
