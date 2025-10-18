@@ -1,6 +1,8 @@
 # Velaros
 
-A lightweight, flexible WebSocket framework for Go. Build real-time applications with powerful message routing, bidirectional communication, and composable middleware.
+A lightweight, flexible WebSocket framework for Go that brings HTTP-style message routing to WebSocket connections. Build real-time applications with powerful pattern-based routing, bidirectional request/reply communication, and composable middleware.
+
+Unlike traditional WebSocket libraries that give you a raw connection, Velaros routes messages to handlers based on message paths - similar to HTTP routing but over persistent WebSocket connections. This enables clean, maintainable real-time applications with familiar patterns.
 
 Velaros implements the standard `http.Handler` interface, so it works seamlessly with any Go HTTP router or framework - just mount it on a path like `/ws` and it handles the WebSocket upgrade automatically.
 
@@ -31,6 +33,7 @@ Velaros implements the standard `http.Handler` interface, so it works seamlessly
 - [Integration with HTTP Servers](#integration-with-http-servers)
 - [Configuration](#configuration)
 - [Routing](#routing)
+  - [Route Introspection](#route-introspection)
 - [Connection Lifecycle](#connection-lifecycle)
 - [Bidirectional Communication](#bidirectional-communication)
 - [Advanced Usage](#advanced-usage)
@@ -258,6 +261,39 @@ ws.onmessage = (event) => {
     }
 };
 ```
+
+### Client Implementation Guide
+
+The JavaScript examples above demonstrate the core patterns for building Velaros clients. These patterns apply to any language or platform:
+
+**Key Architecture:**
+
+- **Pending Requests Map** - Track outgoing requests by message ID (see `sendRequest` function above)
+- **Message Routing** - Dispatch incoming messages to the right handler based on ID
+- **Bidirectional** - Handle both client→server requests and server→client requests (shown in "Server-Initiated Requests")
+
+**Non-Browser Clients:**
+
+For Go, Python, or other languages, use your platform's WebSocket library. Connect to the endpoint, then send/receive messages using the same envelope structure `{path, id, data}`:
+
+```go
+// Example: Simple Go client connection
+conn, _, err := websocket.Dial(ctx, "ws://localhost:8080/ws", nil)
+defer conn.Close(websocket.StatusNormalClosure, "")
+
+// Send message (JSON middleware format)
+msg, _ := json.Marshal(map[string]any{
+    "path": "/echo",
+    "id":   "req-1", 
+    "data": map[string]string{"message": "Hello"},
+})
+conn.Write(ctx, websocket.MessageText, msg)
+
+// Read response
+_, resp, _ := conn.Read(ctx)
+```
+
+For production clients, implement the request/reply pattern shown in the JavaScript examples: maintain a pending requests map, run a read loop to dispatch responses, and handle timeouts. This mirrors how Velaros implements `ctx.Request()` internally.
 
 ## Core Concepts
 
@@ -997,6 +1033,65 @@ router.PublicBind("/api/users/:id", func(ctx *velaros.Context) {
 The distinction between `Bind()` and `PublicBind()` helps separate your internal infrastructure routes from your external API surface. Gateway frameworks can call `router.RouteDescriptors()` to get a list of all public routes, enabling automatic service discovery and routing.
 
 See the "API Gateway Integration" section in Advanced Usage for more details on using this pattern in microservice architectures.
+
+### Route Introspection
+
+Velaros provides methods for introspecting routes at runtime, useful for debugging, documentation generation, or dynamic routing scenarios.
+
+**Lookup Handler Pattern:**
+
+`router.Lookup(handler)` finds the pattern associated with a specific handler function. This is particularly useful in WebSocket-based routing where there are no HTTP methods:
+
+```go
+handler := func(ctx *velaros.Context) {
+    ctx.Reply(UserData{Name: "Alice"})
+}
+
+router.Bind("/users/:id", handler)
+
+// Later, find what pattern this handler is bound to
+pattern, found := router.Lookup(handler)
+if found {
+    log.Printf("Handler bound to: %s", pattern.String()) // "/users/:id"
+}
+```
+
+This works with nested routers too - `Lookup()` recursively searches through mounted sub-routers to find handlers.
+
+**Generate Paths from Patterns:**
+
+`pattern.Path(params, wildcards)` generates URLs from route patterns by substituting parameters:
+
+```go
+pattern, _ := velaros.NewPattern("/users/:id/posts/:postID")
+
+// Generate path with parameters
+path, _ := pattern.Path(velaros.MessageParams{
+    "id":     "123",
+    "postID": "456",
+}, nil)
+// Result: "/users/123/posts/456"
+
+// Works with wildcards too
+pattern, _ := velaros.NewPattern("/files/*")
+path, _ := pattern.Path(nil, []string{"documents/report.pdf"})
+// Result: "/files/documents/report.pdf"
+```
+
+This is useful for:
+- Generating client message paths dynamically
+- Building reverse routing / URL generation
+- Creating links in API responses
+- Testing route patterns
+
+**Combining Lookup and Path:**
+
+```go
+// Find the pattern for a handler, then generate a path
+pattern, _ := router.Lookup(getUserHandler)
+messagePath, _ := pattern.Path(velaros.MessageParams{"id": "123"}, nil)
+// Send message to this path from client
+```
 
 ## Connection Lifecycle
 
