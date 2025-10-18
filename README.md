@@ -44,8 +44,8 @@ Velaros implements the standard `http.Handler` interface, so it works seamlessly
 - [Performance](#performance)
 - [Architecture](#architecture)
 - [Examples](#examples)
+- [HTTP Routing](#http-routing)
 - [Testing](#testing)
-- [Need HTTP Routing? Check Out Navaros](#need-http-routing-check-out-navaros)
 - [Help Welcome](#help-welcome)
 - [License](#license)
 - [Related Projects](#related-projects)
@@ -1944,384 +1944,186 @@ func main() {
 }
 ```
 
-## Testing
+## HTTP Routing
 
-Velaros handlers can be tested using Go's standard `httptest` package and the WebSocket client library.
+Velaros can be combined with [Navaros](https://github.com/RobertWHurst/Navaros), an HTTP router that brings the same routing and middleware patterns to HTTP requests. This lets you serve both HTTP and WebSocket traffic from the same server with a consistent API.
 
-### Basic Handler Test
+### Mounting HTTP Routes
+
+Velaros routers implement `http.Handler`, so they can be mounted directly on Navaros or any HTTP router:
 
 ```go
-package main_test
-
 import (
-    "context"
-    "encoding/json"
-    "testing"
-    "net/http/httptest"
-
-    "github.com/RobertWHurst/velaros"
-    jsonMiddleware "github.com/RobertWHurst/velaros/middleware/json"
-    "github.com/coder/websocket"
-)
-
-func TestEchoHandler(t *testing.T) {
-    // Create router
-    router := velaros.NewRouter()
-    router.Use(jsonMiddleware.Middleware())
-
-    // Add handler to test
-    router.Bind("/echo", func(ctx *velaros.Context) {
-        var req map[string]string
-        if err := ctx.Unmarshal(&req); err != nil {
-            t.Fatal(err)
-        }
-        ctx.Reply(map[string]string{"echo": req["message"]})
-    })
-
-    // Create test server
-    server := httptest.NewServer(router)
-    defer server.Close()
-
-    // Connect WebSocket client
-    ctx := context.Background()
-    conn, _, err := websocket.Dial(ctx, server.URL, nil)
-    if err != nil {
-        t.Fatal(err)
-    }
-    defer conn.Close(websocket.StatusNormalClosure, "")
-
-    // Send message
-    message := map[string]any{
-        "path": "/echo",
-        "id":   "123",
-        "data": map[string]string{"message": "hello"},
-    }
-    msgBytes, _ := json.Marshal(message)
-    if err := conn.Write(ctx, websocket.MessageText, msgBytes); err != nil {
-        t.Fatal(err)
-    }
-
-    // Read response
-    _, responseBytes, err := conn.Read(ctx)
-    if err != nil {
-        t.Fatal(err)
-    }
-
-    var response map[string]any
-    if err := json.Unmarshal(responseBytes, &response); err != nil {
-        t.Fatal(err)
-    }
-
-    // Verify response
-    if response["id"] != "123" {
-        t.Errorf("expected id '123', got %v", response["id"])
-    }
-
-    data := response["data"].(map[string]any)
-    if data["echo"] != "hello" {
-        t.Errorf("expected echo 'hello', got %v", data["echo"])
-    }
-}
-```
-
-### Testing Lifecycle Hooks
-
-```go
-func TestUseOpenAndClose(t *testing.T) {
-    router := velaros.NewRouter()
-    router.Use(jsonMiddleware.Middleware())
-
-    var openCalled, closeCalled bool
-
-    router.UseOpen(func(ctx *velaros.Context) {
-        openCalled = true
-        ctx.SetOnSocket("initialized", true)
-    })
-
-    router.UseClose(func(ctx *velaros.Context) {
-        closeCalled = true
-        initialized, _ := ctx.GetFromSocket("initialized")
-        if initialized != true {
-            t.Error("expected initialized to be true")
-        }
-    })
-
-    router.Bind("/test", func(ctx *velaros.Context) {
-        ctx.Reply(map[string]string{"status": "ok"})
-    })
-
-    server := httptest.NewServer(router)
-    defer server.Close()
-
-    ctx := context.Background()
-    conn, _, err := websocket.Dial(ctx, server.URL, nil)
-    if err != nil {
-        t.Fatal(err)
-    }
-
-    // Send a test message
-    message := map[string]any{"path": "/test"}
-    msgBytes, _ := json.Marshal(message)
-    conn.Write(ctx, websocket.MessageText, msgBytes)
-
-    // Close connection
-    conn.Close(websocket.StatusNormalClosure, "test complete")
-
-    // Give time for UseClose to execute
-    time.Sleep(100 * time.Millisecond)
-
-    if !openCalled {
-        t.Error("UseOpen handler was not called")
-    }
-    if !closeCalled {
-        t.Error("UseClose handler was not called")
-    }
-}
-```
-
-### Testing Server-Initiated Requests
-
-```go
-func TestServerInitiatedRequest(t *testing.T) {
-    router := velaros.NewRouter()
-    router.Use(jsonMiddleware.Middleware())
-
-    router.Bind("/trigger", func(ctx *velaros.Context) {
-        // Server asks client for confirmation
-        var response map[string]bool
-        err := ctx.RequestInto(
-            map[string]string{"action": "confirm"},
-            &response,
-        )
-        if err != nil {
-            t.Fatal(err)
-        }
-
-        ctx.Reply(map[string]bool{"confirmed": response["confirmed"]})
-    })
-
-    server := httptest.NewServer(router)
-    defer server.Close()
-
-    ctx := context.Background()
-    conn, _, err := websocket.Dial(ctx, server.URL, nil)
-    if err != nil {
-        t.Fatal(err)
-    }
-    defer conn.Close(websocket.StatusNormalClosure, "")
-
-    // Handle server requests in background
-    go func() {
-        for {
-            _, msgBytes, err := conn.Read(ctx)
-            if err != nil {
-                return
-            }
-
-            var msg map[string]any
-            json.Unmarshal(msgBytes, &msg)
-
-            // If this is a request from server, reply
-            if msg["id"] != nil {
-                response := map[string]any{
-                    "id":   msg["id"],
-                    "data": map[string]bool{"confirmed": true},
-                }
-                respBytes, _ := json.Marshal(response)
-                conn.Write(ctx, websocket.MessageText, respBytes)
-            }
-        }
-    }()
-
-    // Send trigger message
-    message := map[string]any{
-        "path": "/trigger",
-        "id":   "trigger-123",
-    }
-    msgBytes, _ := json.Marshal(message)
-    conn.Write(ctx, websocket.MessageText, msgBytes)
-
-    // Read final response
-    _, responseBytes, _ := conn.Read(ctx)
-    var response map[string]any
-    json.Unmarshal(responseBytes, &response)
-
-    data := response["data"].(map[string]any)
-    if data["confirmed"] != true {
-        t.Error("expected confirmed to be true")
-    }
-}
-```
-
-**Testing Tips:**
-
-- Use `httptest.NewServer()` to create a test server
-- Use `websocket.Dial()` from `github.com/coder/websocket` to connect
-- Match your middleware format in tests (these examples use JSON: `{"path": "...", "id": "...", "data": {...}}`)
-- For lifecycle hooks, add small delays (`time.Sleep`) to allow async operations to complete
-- Test both happy path and error cases
-- Use table-driven tests for testing multiple scenarios
-
-## Need HTTP Routing? Check Out Navaros
-
-If you're building applications with both HTTP endpoints and WebSocket connections, **[Navaros](https://github.com/RobertWHurst/Navaros)** is Velaros' companion HTTP router. Both frameworks share the same routing pattern syntax and middleware philosophy, making it easy to use them together in the same application.
-
-### Why Use Both?
-
-Modern applications often need both request/response (HTTP) and real-time (WebSocket) communication:
-
-- **HTTP for traditional APIs** - REST endpoints, webhooks, health checks
-- **WebSocket for real-time features** - Live updates, chat, notifications, collaborative editing
-
-Using Velaros and Navaros together gives you a consistent API design across both protocols:
-
-```go
-package main
-
-import (
-    "net/http"
     "github.com/RobertWHurst/navaros"
     "github.com/RobertWHurst/velaros"
-    navJSON "github.com/RobertWHurst/navaros/middleware/json"
-    velJSON "github.com/RobertWHurst/velaros/middleware/json"
+    njson "github.com/RobertWHurst/navaros/middleware/json"
+    vjson "github.com/RobertWHurst/velaros/middleware/json"
 )
 
-func main() {
-    // HTTP Router with Navaros
-    httpRouter := navaros.NewRouter()
-    httpRouter.Use(navJSON.Middleware(nil))
+// Create HTTP router
+httpRouter := navaros.NewRouter()
+httpRouter.Use(njson.Middleware(nil))
+
+// Create WebSocket router
+wsRouter := velaros.NewRouter()
+wsRouter.Use(vjson.Middleware())
+
+// Add HTTP routes
+httpRouter.Get("/api/users/:id", func(ctx *navaros.Context) {
+    userID := ctx.Params()["id"]
+    ctx.Body = getUserByID(userID)
+})
+
+// Add WebSocket routes
+wsRouter.Bind("/users/:id/status", func(ctx *velaros.Context) {
+    userID := ctx.Params().Get("id")
     
-    // REST endpoint for getting user profile
-    httpRouter.Get("/api/users/:id", func(ctx *navaros.Context) {
-        userID := ctx.Params()["id"]
-        user := getUserByID(userID)
-        ctx.Status = http.StatusOK
-        ctx.Body = user
-    })
+    subscription := statusUpdates.Subscribe(userID)
+    defer subscription.Unsubscribe()
     
-    // WebSocket Router with Velaros
-    wsRouter := velaros.NewRouter()
-    wsRouter.Use(velJSON.Middleware())
+    ctx.Reply(SubscribeResponse{Status: "subscribed"})
     
-    // Real-time updates for user status
-    wsRouter.Bind("/users/:id/status", func(ctx *velaros.Context) {
-        userID := ctx.Params().Get("id")
-        
-        // Subscribe to status changes
-        subscription := statusUpdates.Subscribe(userID)
-        defer subscription.Unsubscribe()
-        
-        ctx.Reply(SubscribeResponse{Status: "subscribed"})
-        
-        // Stream updates in real-time
-        for {
-            select {
-            case update := <-subscription.Updates():
-                ctx.Send(StatusUpdate{UserID: userID, Status: update})
-            case <-ctx.Done():
-                return
-            }
+    for {
+        select {
+        case update := <-subscription.Updates():
+            ctx.Send(StatusUpdate{Status: update})
+        case <-ctx.Done():
+            return
         }
-    })
-    
-    // Mount both routers on the same server
-    http.Handle("/api/", httpRouter)
-    http.Handle("/ws", wsRouter)
-    
-    http.ListenAndServe(":8080", nil)
-}
+    }
+})
+
+// Mount WebSocket router on HTTP router
+httpRouter.Get("/ws", wsRouter)
+
+http.ListenAndServe(":8080", httpRouter)
 ```
 
-### Shared Design Philosophy
+### Shared Patterns and Concepts
 
 Both routers use identical pattern syntax and middleware concepts:
 
-**Pattern Matching:**
+**Routing Patterns:**
+
 ```go
-// Both support the same route patterns
-"/users/:id"              // Named parameter
-"/files/**"              // Wildcard
-"/users/:id(\\d+)"       // Regex constraint
-"/posts/:slug?"          // Optional segment
+// HTTP routing
+httpRouter.Get("/users/:id", getUserHandler)
+httpRouter.Post("/files/**", uploadHandler)
+
+// WebSocket routing - same pattern syntax
+wsRouter.Bind("/users/:id", getUserMessageHandler)
+wsRouter.Bind("/files/**", fileMessageHandler)
 ```
 
-**Middleware Chain:**
+**Middleware:**
+
 ```go
-// Same middleware pattern in both routers
-router.Use(func(ctx *Context) {
-    // Pre-processing
+// HTTP middleware
+httpRouter.Use("/admin/**", func(ctx *navaros.Context) {
+    if !authenticated(ctx) {
+        ctx.Status = http.StatusUnauthorized
+        return
+    }
     ctx.Next()
-    // Post-processing
+})
+
+// WebSocket middleware - same structure
+wsRouter.Use("/admin/**", func(ctx *velaros.Context) {
+    if !authenticated(ctx) {
+        ctx.Send(ErrorResponse{Error: "unauthorized"})
+        return
+    }
+    ctx.Next()
 })
 ```
 
-**Context-Based API:**
-```go
-// Navaros HTTP context
-httpRouter.Get("/users/:id", func(ctx *navaros.Context) {
-    id := ctx.Params()["id"]
-    ctx.Status = http.StatusOK
-    ctx.Body = getUserByID(id)
-})
+**Context Storage:**
 
-// Velaros WebSocket context
-wsRouter.Bind("/users/:id", func(ctx *velaros.Context) {
-    id := ctx.Params().Get("id")
-    ctx.Reply(getUserByID(id))
-})
-```
-
-### Key Differences
-
-While the API is similar, each router is optimized for its protocol:
-
-| Feature | Navaros (HTTP) | Velaros (WebSocket) |
-|---------|---------------|---------------------|
-| **Connection** | Request/response | Persistent bidirectional |
-| **State** | Stateless per-request | Stateful per-connection |
-| **Communication** | Client→Server only | Client↔Server bidirectional |
-| **Storage** | Per-request context | Per-message + per-connection |
-| **Methods** | GET, POST, PUT, etc. | Path-based routing only |
-| **Body** | `ctx.Body` field | `ctx.Send()` / `ctx.Reply()` |
-
-### Common Use Cases
-
-**Navaros handles:**
-- REST API endpoints
-- Static file serving
-- Form submissions
-- Webhooks
-- Health checks
-- OAuth callbacks
-
-**Velaros handles:**
-- Live dashboards
-- Chat applications
-- Real-time notifications
-- Collaborative editing
-- Game servers
-- Live data streaming
-
-### Example: Chat Application
+Both routers provide context storage with similar semantics:
 
 ```go
-// HTTP endpoints for user management
-httpRouter.Post("/api/register", registerUser)
-httpRouter.Post("/api/login", loginUser)
-httpRouter.Get("/api/rooms", listChatRooms)
+// HTTP: per-request storage (cleared after request completes)
+httpRouter.Use(func(ctx *navaros.Context) {
+    ctx.Set("requestID", generateID())
+    ctx.Next()
+})
 
-// WebSocket for real-time chat
-wsRouter.Bind("/chat/:room/join", joinChatRoom)
-wsRouter.Bind("/chat/:room/message", sendMessage)
-wsRouter.Bind("/chat/:room/typing", broadcastTyping)
+// WebSocket: per-message storage (cleared after message processing completes)
+wsRouter.Use(func(ctx *velaros.Context) {
+    ctx.Set("messageID", generateID())
+    ctx.Next()
+})
+
+// WebSocket: per-connection storage (persists for the connection lifetime)
+wsRouter.UseOpen(func(ctx *velaros.Context) {
+    ctx.SetOnSocket("sessionID", generateID())
+})
 ```
 
-### Learn More
+## Testing
 
-- **Navaros Repository:** [github.com/RobertWHurst/Navaros](https://github.com/RobertWHurst/Navaros)
-- **Navaros Documentation:** [pkg.go.dev/github.com/RobertWHurst/navaros](https://pkg.go.dev/github.com/RobertWHurst/navaros)
+Test your handlers using `httptest` from the standard library and a WebSocket client. Create a test server, connect a client, send messages, and assert on the responses.
 
-Both routers are lightweight, high-performance, and have zero external dependencies beyond the Go standard library (except for middleware packages which use appropriate serialization libraries).
+```go
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"testing"
+	
+	"github.com/RobertWHurst/velaros"
+	"github.com/RobertWHurst/velaros/middleware/json"
+	"github.com/coder/websocket"
+)
+
+func TestHandler(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(json.Middleware())
+	
+	router.Bind("/echo", func(ctx *velaros.Context) {
+		var req map[string]string
+		ctx.Unmarshal(&req)
+		ctx.Reply(map[string]string{"echo": req["message"]})
+	})
+	
+	server := httptest.NewServer(router)
+	defer server.Close()
+	
+	ctx := context.Background()
+	conn, _, _ := websocket.Dial(ctx, server.URL, nil)
+	defer conn.Close(websocket.StatusNormalClosure, "")
+	
+	// Send message
+	msg := map[string]any{
+		"path": "/echo",
+		"id":   "123",
+		"data": map[string]string{"message": "hello"},
+	}
+	msgBytes, _ := json.Marshal(msg)
+	conn.Write(ctx, websocket.MessageText, msgBytes)
+	
+	// Read response
+	_, respBytes, _ := conn.Read(ctx)
+	var response map[string]any
+	json.Unmarshal(respBytes, &response)
+	
+	if response["id"] != "123" {
+		t.Errorf("expected id '123', got %v", response["id"])
+	}
+	
+	data := response["data"].(map[string]any)
+	if data["echo"] != "hello" {
+		t.Errorf("expected echo 'hello', got %v", data["echo"])
+	}
+}
+```
+
+Run tests:
+
+```bash
+go test ./...
+go test -cover ./...
+```
 
 ## Help Welcome
 
