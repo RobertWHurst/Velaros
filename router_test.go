@@ -353,15 +353,15 @@ func TestRouterRequestWithContext(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/cancel-test", func(ctx *velaros.Context) {
-		cancelCtx, cancel := context.WithCancel(context.Background())
-		cancel()
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
 
 		_, err := ctx.RequestWithContext(cancelCtx, testMessage{Msg: "Ping"})
 		if err == nil {
-			t.Error("expected context cancelled error, got nil")
+			t.Error("expected context timeout error, got nil")
 			return
 		}
-		if err := ctx.Send(testMessage{Msg: "Cancelled"}); err != nil {
+		if err := ctx.Send(testMessage{Msg: "Timeout"}); err != nil {
 			t.Errorf("send failed: %v", err)
 		}
 	})
@@ -376,6 +376,8 @@ func TestRouterRequestWithContext(t *testing.T) {
 		t.Fatalf("expected server to send 'Ping', got %q", reqData.Msg)
 	}
 
+	time.Sleep(100 * time.Millisecond)
+
 	reply := map[string]any{
 		"id":   reqID,
 		"data": testMessage{Msg: "Too late"},
@@ -389,8 +391,8 @@ func TestRouterRequestWithContext(t *testing.T) {
 	}
 
 	_, response := readMessage(t, conn, ctx)
-	if response.Msg != "Cancelled" {
-		t.Errorf("expected 'Cancelled', got %q", response.Msg)
+	if response.Msg != "Timeout" {
+		t.Errorf("expected 'Timeout', got %q", response.Msg)
 	}
 }
 
@@ -399,16 +401,16 @@ func TestRouterRequestIntoWithContext(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/cancel-test", func(ctx *velaros.Context) {
-		cancelCtx, cancel := context.WithCancel(ctx)
-		cancel()
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
 
 		var response testMessage
 		err := ctx.RequestIntoWithContext(cancelCtx, testMessage{Msg: "Ping"}, &response)
 		if err == nil {
-			t.Error("expected context cancelled error, got nil")
+			t.Error("expected context timeout error, got nil")
 			return
 		}
-		if err := ctx.Send(testMessage{Msg: "Cancelled"}); err != nil {
+		if err := ctx.Send(testMessage{Msg: "Timeout"}); err != nil {
 			t.Errorf("send failed: %v", err)
 		}
 	})
@@ -423,6 +425,8 @@ func TestRouterRequestIntoWithContext(t *testing.T) {
 		t.Fatalf("expected server to send 'Ping', got %q", reqData.Msg)
 	}
 
+	time.Sleep(100 * time.Millisecond)
+
 	reply := map[string]any{
 		"id":   reqID,
 		"data": testMessage{Msg: "Too late"},
@@ -436,8 +440,8 @@ func TestRouterRequestIntoWithContext(t *testing.T) {
 	}
 
 	_, response := readMessage(t, conn, ctx)
-	if response.Msg != "Cancelled" {
-		t.Errorf("expected 'Cancelled', got %q", response.Msg)
+	if response.Msg != "Timeout" {
+		t.Errorf("expected 'Timeout', got %q", response.Msg)
 	}
 }
 
