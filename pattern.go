@@ -11,6 +11,7 @@ import (
 // a given request.
 type Pattern struct {
 	str    string
+	chunks []chunk
 	regExp *regexp.Regexp
 }
 
@@ -18,13 +19,19 @@ type Pattern struct {
 // valid route pattern. If the string is not a valid route pattern, an error
 // is returned.
 func NewPattern(patternStr string) (*Pattern, error) {
-	patternRegExp, err := regExpFromPattern(patternStr)
+	chunks, err := parsePatternChunks(patternStr)
+	if err != nil {
+		return nil, err
+	}
+
+	patternRegExp, err := regExpFromChunks(chunks)
 	if err != nil {
 		return nil, err
 	}
 
 	pattern := &Pattern{
 		str:    patternStr,
+		chunks: chunks,
 		regExp: patternRegExp,
 	}
 
@@ -51,6 +58,52 @@ func (p *Pattern) Match(path string) (MessageParams, bool) {
 	}
 
 	return params, true
+}
+
+// Path creates a path string from the pattern by replacing dynamic segments with
+// the provided parameters. If a required parameter is missing, an error is
+// returned. Optional segments are only included if their parameters are provided.
+// Wildcard segments are replaced with values from the wildcards slice in order.
+// If there are more wildcard segments than values in the slice, an error is returned.
+func (p *Pattern) Path(params MessageParams, wildcards []string) (string, error) {
+	path := ""
+	wildcardIndex := 0
+
+	// Build the path from chunks
+	for _, currentChunk := range p.chunks {
+		switch currentChunk.kind {
+		case static:
+			// Static segments are always included
+			path += "/" + currentChunk.pattern
+		case dynamic:
+			value, exists := params[currentChunk.key]
+
+			// Check if parameter is required
+			if !exists {
+				if currentChunk.modifier == optional || currentChunk.modifier == zeroOrMore {
+					// Optional parameter, skip this segment
+					continue
+				}
+				return "", errors.New("missing required parameter: " + currentChunk.key)
+			}
+
+			// Add the parameter value
+			path += "/" + value
+		case wildcard:
+			// Use next wildcard value from slice
+			if wildcardIndex >= len(wildcards) {
+				return "", errors.New("not enough wildcard values provided")
+			}
+			path += "/" + wildcards[wildcardIndex]
+			wildcardIndex++
+		}
+	}
+
+	if path == "" {
+		path = "/"
+	}
+
+	return path, nil
 }
 
 func (p *Pattern) MatchInto(path string, params *MessageParams) bool {
@@ -107,9 +160,7 @@ type chunk = struct {
 	pattern  string
 }
 
-// regExpFromPattern converts a route pattern string to a regular expression.
-// This is the heart of Pattern and parses the pattern character by character.
-func regExpFromPattern(patternStr string) (*regexp.Regexp, error) {
+func parsePatternChunks(patternStr string) ([]chunk, error) {
 	patternRunes := []rune(patternStr)
 	patternRunesLen := len(patternRunes)
 
@@ -192,6 +243,11 @@ func regExpFromPattern(patternStr string) (*regexp.Regexp, error) {
 		chunks = append(chunks, *currentChunk)
 	}
 
+	return chunks, nil
+}
+
+// regExpFromChunks converts parsed pattern chunks to a regular expression.
+func regExpFromChunks(chunks []chunk) (*regexp.Regexp, error) {
 	regExpStr := "^"
 	for _, currentChunk := range chunks {
 

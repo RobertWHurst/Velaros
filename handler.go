@@ -18,4 +18,5 @@ type HandlerFunc func(ctx *Context)
 type RouterHandler interface {
 	RouteDescriptors() []*RouteDescriptor
 	Handle(ctx *Context)
+	Lookup(handlerOrTransformer any) (*Pattern, bool)
 }

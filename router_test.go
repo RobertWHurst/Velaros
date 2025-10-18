@@ -835,3 +835,85 @@ func TestClientInitiatedClose(t *testing.T) {
 		t.Error("expected UseClose handler to be called after client close")
 	}
 }
+
+func TestRouterLookupSimpleBind(t *testing.T) {
+	router := velaros.NewRouter()
+	handler := func(ctx *velaros.Context) {}
+
+	router.Bind("/test/:id", handler)
+
+	foundPattern, found := router.Lookup(handler)
+	if !found {
+		t.Error("expected handler to be found")
+	}
+	if foundPattern == nil {
+		t.Error("expected pattern to be non-nil")
+	}
+	if foundPattern.String() != "/test/:id" {
+		t.Errorf("expected pattern '/test/:id', got %q", foundPattern.String())
+	}
+}
+
+func TestRouterLookupNonExistent(t *testing.T) {
+	router := velaros.NewRouter()
+	notFoundHandler := func(ctx *velaros.Context) {}
+
+	_, found := router.Lookup(notFoundHandler)
+	if found {
+		t.Error("expected non-existent handler not to be found")
+	}
+}
+
+func TestRouterLookupLifecycle(t *testing.T) {
+	router := velaros.NewRouter()
+	lifecycleHandler := func(ctx *velaros.Context) {}
+
+	router.UseOpen(lifecycleHandler)
+	router.UseClose(lifecycleHandler)
+
+	_, found := router.Lookup(lifecycleHandler)
+	if found {
+		t.Error("expected lifecycle handlers not to be found in Lookup (no pattern)")
+	}
+}
+
+func TestRouterLookupNested(t *testing.T) {
+	parent := velaros.NewRouter()
+	sub := velaros.NewRouter()
+	nestedHandler := func(ctx *velaros.Context) {}
+
+	sub.Bind("/nested/:param", nestedHandler)
+
+	parent.Use("/api/**", sub)
+
+	foundPattern, found := parent.Lookup(nestedHandler)
+	if !found {
+		t.Error("expected nested handler to be found")
+	}
+	if foundPattern.String() != "/nested/:param" {
+		t.Errorf("expected sub-router pattern '/nested/:param', got %q", foundPattern.String())
+	}
+}
+
+func TestRouterLookupMount(t *testing.T) {
+	router := velaros.NewRouter()
+	middlewareHandler := func(ctx *velaros.Context) { ctx.Next() }
+	testHandler := func(ctx *velaros.Context) {}
+
+	router.Use("/mount/**", middlewareHandler)
+	router.Bind("/mount/test", testHandler)
+
+	foundPattern, found := router.Lookup(testHandler)
+	if !found {
+		t.Error("expected test handler to be found")
+	}
+	if foundPattern.String() != "/mount/test" {
+		t.Errorf("expected pattern '/mount/test', got %q", foundPattern.String())
+	}
+
+	// Middleware handler should return mount pattern
+	foundMount, _ := router.Lookup(middlewareHandler)
+	if foundMount.String() != "/mount/**" {
+		t.Errorf("expected mount pattern '/mount/**', got %q", foundMount.String())
+	}
+}

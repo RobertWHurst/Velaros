@@ -212,6 +212,31 @@ func (r *Router) RouteDescriptors() []*RouteDescriptor {
 	return r.routeDescriptors
 }
 
+// Lookup finds the bound pattern for a specific handler/transformer.
+// Returns the pattern and true if found; recurses into nested routers.
+// Only searches BindTypeBind chain (WS message routing).
+// Patterns are root-relative as bound.
+func (r *Router) Lookup(handlerOrTransformer any) (*Pattern, bool) {
+	targetPtr := reflect.ValueOf(handlerOrTransformer).Pointer()
+
+	currentNode := r.firstHandlerNode
+	for currentNode != nil {
+		for _, h := range currentNode.Handlers {
+			if reflect.ValueOf(h).Pointer() == targetPtr {
+				return currentNode.Pattern, true
+			}
+			if router, ok := h.(RouterHandler); ok {
+				if pattern, found := router.Lookup(handlerOrTransformer); found {
+					return pattern, true
+				}
+			}
+		}
+		currentNode = currentNode.Next
+	}
+
+	return nil, false
+}
+
 func (r *Router) bind(bindType BindType, isPublic bool, path string, handlers ...any) {
 	if len(handlers) == 0 {
 		panic("no handlers provided")

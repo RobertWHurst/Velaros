@@ -86,24 +86,24 @@ func TestNewPattern(t *testing.T) {
 
 func TestPatternMatch(t *testing.T) {
 	tests := []struct {
-		name          string
-		pattern       string
-		path          string
-		shouldMatch   bool
+		name           string
+		pattern        string
+		path           string
+		shouldMatch    bool
 		expectedParams map[string]string
 	}{
 		{
-			name:          "exact match",
-			pattern:       "/users",
-			path:          "/users",
-			shouldMatch:   true,
+			name:           "exact match",
+			pattern:        "/users",
+			path:           "/users",
+			shouldMatch:    true,
 			expectedParams: map[string]string{},
 		},
 		{
-			name:          "exact match with trailing slash",
-			pattern:       "/users",
-			path:          "/users/",
-			shouldMatch:   true,
+			name:           "exact match with trailing slash",
+			pattern:        "/users",
+			path:           "/users/",
+			shouldMatch:    true,
 			expectedParams: map[string]string{},
 		},
 		{
@@ -138,10 +138,10 @@ func TestPatternMatch(t *testing.T) {
 			},
 		},
 		{
-			name:        "wildcard match",
-			pattern:     "/static/*",
-			path:        "/static/anything",
-			shouldMatch: true,
+			name:           "wildcard match",
+			pattern:        "/static/*",
+			path:           "/static/anything",
+			shouldMatch:    true,
 			expectedParams: map[string]string{},
 		},
 		{
@@ -410,4 +410,138 @@ func TestPatternEdgeCases(t *testing.T) {
 			t.Error("expected special characters in path to work")
 		}
 	})
+}
+
+func TestPatternPath(t *testing.T) {
+	tests := []struct {
+		name         string
+		pattern      string
+		params       MessageParams
+		wildcards    []string
+		expectedPath string
+		shouldError  bool
+	}{
+		{
+			name:         "static path",
+			pattern:      "/users",
+			params:       nil,
+			wildcards:    nil,
+			expectedPath: "/users",
+			shouldError:  false,
+		},
+		{
+			name:         "dynamic required param",
+			pattern:      "/users/:id",
+			params:       MessageParams{"id": "123"},
+			wildcards:    nil,
+			expectedPath: "/users/123",
+			shouldError:  false,
+		},
+		{
+			name:         "dynamic required missing param",
+			pattern:      "/users/:id",
+			params:       MessageParams{},
+			wildcards:    nil,
+			expectedPath: "",
+			shouldError:  true,
+		},
+		{
+			name:         "dynamic optional present",
+			pattern:      "/users/:id?",
+			params:       MessageParams{"id": "123"},
+			wildcards:    nil,
+			expectedPath: "/users/123",
+			shouldError:  false,
+		},
+		{
+			name:         "dynamic optional missing",
+			pattern:      "/users/:id?",
+			params:       MessageParams{},
+			wildcards:    nil,
+			expectedPath: "/users",
+			shouldError:  false,
+		},
+		{
+			name:         "wildcard single",
+			pattern:      "/static/*",
+			params:       nil,
+			wildcards:    []string{"file.js"},
+			expectedPath: "/static/file.js",
+			shouldError:  false,
+		},
+		{
+			name:         "wildcard insufficient",
+			pattern:      "/static/*",
+			params:       nil,
+			wildcards:    []string{},
+			expectedPath: "",
+			shouldError:  true,
+		},
+		{
+			name:         "zero or more empty",
+			pattern:      "/files/:path*",
+			params:       MessageParams{},
+			wildcards:    nil,
+			expectedPath: "/files",
+			shouldError:  false,
+		},
+		{
+			name:         "one or more with value",
+			pattern:      "/files/:path+",
+			params:       MessageParams{"path": "doc.pdf"},
+			wildcards:    nil,
+			expectedPath: "/files/doc.pdf",
+			shouldError:  false,
+		},
+		{
+			name:         "one or more missing",
+			pattern:      "/files/:path+",
+			params:       MessageParams{},
+			wildcards:    nil,
+			expectedPath: "",
+			shouldError:  true,
+		},
+		{
+			name:         "mixed static dynamic wildcard",
+			pattern:      "/api/:version/users/*",
+			params:       MessageParams{"version": "v1"},
+			wildcards:    []string{"profile/123"},
+			expectedPath: "/api/v1/users/profile/123",
+			shouldError:  false,
+		},
+		{
+			name:         "root path",
+			pattern:      "/",
+			params:       nil,
+			wildcards:    nil,
+			expectedPath: "/",
+			shouldError:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			pattern, err := NewPattern(tt.pattern)
+			if err != nil {
+				t.Fatalf("failed to create pattern: %v", err)
+			}
+
+			path, err := pattern.Path(tt.params, tt.wildcards)
+
+			if tt.shouldError {
+				if err == nil {
+					t.Errorf("expected error, got nil")
+				}
+				return
+			}
+
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+
+			if path != tt.expectedPath {
+				t.Errorf("expected path %q, got %q", tt.expectedPath, path)
+			}
+		})
+	}
 }
