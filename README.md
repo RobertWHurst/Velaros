@@ -2179,6 +2179,6 @@ MIT License - see [LICENSE](LICENSE) for details.
 
 ## Related Projects
 
-- [Navaros](https://github.com/RobertWHurst/Navaros) - HTTP framework for Go (companion project, shares similar API design)
+- [Navaros](https://github.com/RobertWHurst/Navaros) - Lightweight HTTP framework for Go with flexible message routing and middleware - shares Velaros' routing patterns and API design philosophy
 - [Zephyr](https://github.com/TelemetryTV/Zephyr) - Microservice framework built on Navaros with service discovery and fulling streaming HTTP all the way to the service.
 - Eurus - WebSocket API gateway framework (upcoming, integrates with Velaros via route descriptors)
