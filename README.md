@@ -2163,11 +2163,11 @@ func TestServerInitiatedRequest(t *testing.T) {
 
 ## Help Welcome
 
-If you want to support this project with coffee money, it's greatly appreciated.
+If you want to support this project by throwing me some coffee money it's greatly appreciated.
 
 [![sponsor](https://img.shields.io/static/v1?label=Sponsor&message=%E2%9D%A4&logo=GitHub&color=%23fe8e86)](https://github.com/sponsors/RobertWHurst)
 
-If you're interested in providing feedback or would like to contribute, please feel free to do so. I recommend first [opening an issue][feature-request] expressing your feedback or intent to contribute a change. From there we can consider your feedback or guide your contribution efforts. Any and all help is greatly appreciated.
+If you're interested in providing feedback or would like to contribute please feel free to do so. I recommend first opening an issue expressing your feedback or intent to contribute a change, from there we can consider your feedback or guide your contribution efforts. Any and all help is greatly appreciated since this is an open source effort after all.
 
 Thank you!
 
