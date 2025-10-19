@@ -36,7 +36,7 @@ type Socket struct {
 	closeMx            sync.Mutex
 	closed             bool
 	closeStatus        Status
-	closeStatusSource  StatusSource
+	closeStatusSource  CloseSource
 	closeReason        string
 	ctx                context.Context
 	cancelCtx          context.CancelFunc
@@ -75,7 +75,7 @@ func (s *Socket) Value(key any) any {
 	return s.ctx.Value(key)
 }
 
-func (s *Socket) close(status Status, reason string, source StatusSource) {
+func (s *Socket) close(status Status, reason string, source CloseSource) {
 	s.closeMx.Lock()
 	defer s.closeMx.Unlock()
 	if s.closed {
@@ -128,7 +128,7 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	if err != nil {
 		closeStatus := websocket.CloseStatus(err)
 		if closeStatus != -1 {
-			s.close(Status(closeStatus), "", StatusSourceClient)
+			s.close(Status(closeStatus), "", ClientCloseSource)
 			return false
 		}
 		if errors.Is(err, context.Canceled) {

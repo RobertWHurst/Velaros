@@ -6,6 +6,8 @@ Unlike traditional WebSocket libraries that give you a raw connection, Velaros r
 
 Velaros implements the standard `http.Handler` interface, so it works seamlessly with any Go HTTP router or framework - just mount it on a path like `/ws` and it handles the WebSocket upgrade automatically.
 
+It also integrates as middleware with Navaros, its sister HTTP framework, through `router.Middleware()`. Learn more about Navaros at [github.com/RobertWHurst/Navaros](https://github.com/RobertWHurst/Navaros).
+
 [![Go Reference](https://pkg.go.dev/badge/github.com/RobertWHurst/velaros.svg)](https://pkg.go.dev/github.com/RobertWHurst/velaros)
 [![Go Report Card](https://goreportcard.com/badge/github.com/RobertWHurst/velaros)](https://goreportcard.com/report/github.com/RobertWHurst/velaros)
 [![CI](https://github.com/RobertWHurst/Velaros/actions/workflows/ci.yml/badge.svg)](https://github.com/RobertWHurst/Velaros/actions/workflows/ci.yml)
@@ -19,7 +21,6 @@ Velaros implements the standard `http.Handler` interface, so it works seamlessly
 - [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
-- [Client Integration](#client-integration)
 - [Core Concepts](#core-concepts)
   - [Message Format](#message-format)
   - [Context](#context)
@@ -29,7 +30,7 @@ Velaros implements the standard `http.Handler` interface, so it works seamlessly
   - [JSON Middleware](#json-middleware)
   - [MessagePack Middleware](#messagepack-middleware)
   - [Protocol Buffers Middleware](#protocol-buffers-middleware)
-  - [Set Middleware](#set-middleware)
+  - [Set Middleware Variants](#set-middleware-variants)
 - [Integration with HTTP Servers](#integration-with-http-servers)
 - [Configuration](#configuration)
 - [Routing](#routing)
@@ -43,8 +44,7 @@ Velaros implements the standard `http.Handler` interface, so it works seamlessly
 - [Message Types](#message-types)
 - [Performance](#performance)
 - [Architecture](#architecture)
-- [Examples](#examples)
-- [HTTP Routing](#http-routing)
+- [Use with Navaros](#use-with-navaros)
 - [Testing](#testing)
 - [Help Welcome](#help-welcome)
 - [License](#license)
@@ -53,7 +53,7 @@ Velaros implements the standard `http.Handler` interface, so it works seamlessly
 ## Features
 
 - 🚀 **High Performance** - Context pooling and efficient message routing
-- 🔄 **Bidirectional** - Full duplex communication with Send, Reply, Request, and RequestInto patterns
+- 🔄 **Bidirectional** - Full duplex communication where both client and server can initiate messages and await responses
 - 🎯 **Powerful Patterns** - Flexible routing with parameters, wildcards, regex constraints, and modifiers
 - 🔌 **Middleware** - Composable middleware for authentication, logging, and more
 - 🔁 **Lifecycle Hooks** - UseOpen and UseClose middleware for connection initialization and cleanup
@@ -69,253 +69,110 @@ go get github.com/RobertWHurst/velaros
 
 ## Quick Start
 
+Here's a simple game server that demonstrates the core concepts: HTTP-like message routing, socket state persistence, and bidirectional communication where the server can request data from clients.
+
 ```go
-package main
+router := velaros.NewRouter()
+router.Use(json.Middleware())
 
-import (
-    "log"
-    "net/http"
+// Player joins game
+router.Bind("/game/join", func(ctx *velaros.Context) {
+    var player JoinRequest
+    ctx.Unmarshal(&player)
+    
+    ctx.SetOnSocket("playerName", player.PlayerName)
+    ctx.Reply(JoinResponse{PlayerID: "p123", Status: "joined"})
+})
 
-    "github.com/RobertWHurst/velaros"
-    "github.com/RobertWHurst/velaros/middleware/json"
-)
+// Player performs action
+router.Bind("/game/action", func(ctx *velaros.Context) {
+    var action PlayerAction
+    ctx.Unmarshal(&action)
+    
+    playerName := ctx.MustGetFromSocket("playerName").(string)
+    log.Printf("%s performed action: %s", playerName, action.Type)
+    
+    ctx.Reply(ActionResponse{Success: true})
+})
 
-type ChatMessage struct {
-    Username string `json:"username"`
-    Text     string `json:"text"`
-}
-
-type ChatResponse struct {
-    Status string `json:"status"`
-    Text   string `json:"text"`
-}
-
-type ErrorResponse struct {
-    Error string `json:"error"`
-}
-
-func main() {
-    router := velaros.NewRouter()
-
-    // Add JSON middleware for automatic encoding/decoding
-    router.Use(json.Middleware())
-
-    // Handle chat messages
-    router.Bind("/chat/message", func(ctx *velaros.Context) {
-        var msg ChatMessage
-        if err := ctx.Unmarshal(&msg); err != nil {
-            ctx.Send(ErrorResponse{Error: "invalid message"})
+// Server periodically syncs client state
+router.Bind("/game/sync", func(ctx *velaros.Context) {
+    ticker := time.NewTicker(5 * time.Second)
+    defer ticker.Stop()
+    
+    for {
+        select {
+        case <-ticker.C:
+            var state ClientState
+            ctx.RequestInto(SyncRequest{ServerTime: time.Now().Unix()}, &state)
+            log.Printf("Player at: %.2f, %.2f", state.Position.X, state.Position.Y)
+        case <-ctx.Done():
             return
         }
+    }
+})
 
-        log.Printf("Received message from %s: %s", msg.Username, msg.Text)
-
-        // Echo back to client
-        ctx.Reply(ChatResponse{
-            Status: "received",
-            Text:   msg.Text,
-        })
-    })
-
-    // Mount the WebSocket router at /ws
-    http.Handle("/ws", router)
-
-    log.Println("WebSocket server listening on ws://localhost:8080/ws")
-    http.ListenAndServe(":8080", nil)
-}
+http.Handle("/ws", router)
+http.ListenAndServe(":8080", nil)
 ```
 
-## Client Integration
-
-**Note:** This guide uses JSON middleware for examples since it's human-readable and widely understood. Velaros also supports MessagePack (binary) and Protocol Buffers (schema-based). See the [Built-in Middleware](#built-in-middleware) section to learn about all available formats.
-
-### Connecting from JavaScript/Browser
-
-Velaros uses standard WebSocket protocol, so any WebSocket client can connect. Here's how to connect from a browser:
+Here's what a client might look like written in JavaScript.
 
 ```javascript
-// Connect to the WebSocket server
 const ws = new WebSocket('ws://localhost:8080/ws');
 
-ws.onopen = () => {
-    console.log('Connected to Velaros server');
+// Join game
+ws.send(JSON.stringify({
+    path: '/game/join',
+    data: { playerName: 'Alice' }
+}));
 
-    // Send a message using JSON middleware format
-    ws.send(JSON.stringify({
-        path: '/chat/message',
-        id: '123',  // Optional: include for request/reply correlation
-        data: {
-            username: 'Alice',
-            text: 'Hello!'
-        }
-    }));
-};
+// Perform action
+ws.send(JSON.stringify({
+    path: '/game/action',
+    data: { type: 'jump' }
+}));
 
+// Handle server-initiated sync requests
 ws.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-    console.log('Received:', message);
-    // Message structure: { id: '123', data: {...} }
-};
-
-ws.onerror = (error) => {
-    console.error('WebSocket error:', error);
-};
-
-ws.onclose = (event) => {
-    console.log('Disconnected:', event.code, event.reason);
-};
-```
-
-### Message Format with JSON Middleware
-
-When using the JSON middleware (most common), clients must send messages in this structure:
-
-```javascript
-{
-    "path": "/chat/message",     // Required: Routes to handler
-    "id": "unique-id",           // Optional: For request/reply correlation
-    "data": {                    // Your actual message payload
-        "username": "Alice",
-        "text": "Hello!"
-    }
-}
-```
-
-**Field Explanations:**
-
-- **path**: Routes the message to the appropriate handler (like URL routing in HTTP)
-- **id**: Optional message ID for correlating requests with replies. Include this if you expect a reply with the same ID.
-- **data**: Your actual message content - can be any JSON-serializable data
-
-Server responses use the same structure:
-
-```javascript
-{
-    "id": "unique-id",    // Same ID if replying to a request
-    "data": {             // Response payload
-        "status": "success"
-    }
-}
-```
-
-### Client-Side Request/Reply Pattern
-
-```javascript
-// Client sends request and waits for reply
-function sendRequest(path, data) {
-    return new Promise((resolve, reject) => {
-        const requestId = crypto.randomUUID();
-
-        // Set up one-time listener for reply
-        const handleMessage = (event) => {
-            const message = JSON.parse(event.data);
-            if (message.id === requestId) {
-                ws.removeEventListener('message', handleMessage);
-                resolve(message.data);
-            }
-        };
-
-        ws.addEventListener('message', handleMessage);
-
-        // Send request
+    const msg = JSON.parse(event.data);
+    
+    if (msg.path === '/game/sync') {
+        // Server requesting client state - reply with same ID
         ws.send(JSON.stringify({
-            path: path,
-            id: requestId,
-            data: data
+            id: msg.id,
+            data: { position: { x: 10, y: 20 }, health: 100 }
         }));
-
-        // Timeout after 5 seconds
-        setTimeout(() => {
-            ws.removeEventListener('message', handleMessage);
-            reject(new Error('Request timeout'));
-        }, 5000);
-    });
-}
-
-// Usage
-sendRequest('/user/profile', { userId: '123' })
-    .then(profile => console.log('Profile:', profile))
-    .catch(error => console.error('Error:', error));
-```
-
-### Server-Initiated Requests
-
-The server can also initiate requests to the client. The client must reply with the same message ID:
-
-```javascript
-ws.onmessage = (event) => {
-    const message = JSON.parse(event.data);
-
-    // Check if this is a request from server (has id but we didn't send it)
-    if (message.id && message.data.action === 'confirm') {
-        // Server is asking for confirmation
-        const confirmed = window.confirm(message.data.message);
-
-        // Reply with same ID
-        ws.send(JSON.stringify({
-            id: message.id,  // IMPORTANT: Same ID to correlate
-            data: { confirmed: confirmed }
-        }));
-    } else {
-        // Regular message
-        console.log('Received:', message.data);
     }
 };
 ```
 
-### Client Implementation Guide
-
-The JavaScript examples above demonstrate the core patterns for building Velaros clients. These patterns apply to any language or platform:
-
-**Key Architecture:**
-
-- **Pending Requests Map** - Track outgoing requests by message ID (see `sendRequest` function above)
-- **Message Routing** - Dispatch incoming messages to the right handler based on ID
-- **Bidirectional** - Handle both client→server requests and server→client requests (shown in "Server-Initiated Requests")
-
-**Non-Browser Clients:**
-
-For Go, Python, or other languages, use your platform's WebSocket library. Connect to the endpoint, then send/receive messages using the same envelope structure `{path, id, data}`:
-
-```go
-// Example: Simple Go client connection
-conn, _, err := websocket.Dial(ctx, "ws://localhost:8080/ws", nil)
-defer conn.Close(websocket.StatusNormalClosure, "")
-
-// Send message (JSON middleware format)
-msg, _ := json.Marshal(map[string]any{
-    "path": "/echo",
-    "id":   "req-1", 
-    "data": map[string]string{"message": "Hello"},
-})
-conn.Write(ctx, websocket.MessageText, msg)
-
-// Read response
-_, resp, _ := conn.Read(ctx)
-```
-
-For production clients, implement the request/reply pattern shown in the JavaScript examples: maintain a pending requests map, run a read loop to dispatch responses, and handle timeouts. This mirrors how Velaros implements `ctx.Request()` internally.
+**Note:** This example uses the JSON middleware. It expects messages to be structured with `{path, id, data}`. See [Built-in Middleware](#built-in-middleware) for MessagePack and Protocol Buffers formats or to learn more about the JSON middleware.
 
 ## Core Concepts
 
 ### Message Format
 
-Velaros doesn't enforce any specific message format - it's entirely defined by the middleware you choose. Messages are raw bytes until middleware parses them and sets up marshallers/unmarshallers for your handlers.
+Velaros doesn't enforce any specific message format - it's entirely defined by the encoding/decoding middleware you choose. Messages are raw bytes until middleware parses them.
 
-The framework requires middleware to extract two pieces of information from inbound messages:
+The framework requires encoding/decoding middleware to extract two pieces of information from inbound messages:
 
 - **Message Path** - For routing messages to handlers
 - **Message ID** - For request/reply correlation
 
-Middleware does this by calling `ctx.SetMessagePath()` and `ctx.SetMessageID()`, then setting up `ctx.SetMessageUnmarshaler()` and `ctx.SetMessageMarshaller()` for encoding/decoding message data.
+Middleware does this by calling `ctx.SetMessagePath()` and `ctx.SetMessageID()`.
+
+Encoding/decoding middleware can also provide marshallers and unmarshallers by calling `ctx.SetMessageMarshaller()` and `ctx.SetMessageUnmarshaler()`. This allows handlers to unmarshal incoming message data into structs and pass structs to the context's sending methods for automatic encoding.
 
 Message IDs are required for bidirectional request/reply patterns. When a client sends a message with an ID, handlers can use `Reply()` to send a response with the same ID. When handlers use `Request()` to query the client, the server generates an ID that the client must echo back in their response for proper correlation.
 
-Velaros provides middleware for common formats: **JSON** (human-readable), **MessagePack** (binary, high-performance), and **Protocol Buffers** (schema-based, type-safe). You can also create custom middleware for other formats like CBOR, or even plain text/binary protocols. See the [Built-in Middleware](#built-in-middleware) section for details on each format.
+Velaros provides encoding/decoding middleware for common formats: **JSON** (human-readable), **MessagePack** (binary, high-performance), and **Protocol Buffers** (strongly-typed, cross-language, production-grade). You can also create custom encoding/decoding middleware for other formats like CBOR, or even plain text/binary protocols. See the [Built-in Middleware](#built-in-middleware) section for details on each format.
 
 ### Context
 
-The Context object is passed to every handler and provides access to the current message, socket information, and utility methods for sending responses. It supports both per-message storage (context-level) and per-connection storage (socket-level).
+The Context object is passed to every handler and provides access to the current message, socket information, and utility methods for sending responses. It's your primary interface for interacting with WebSocket connections - reading message data, extracting route parameters, storing state, sending responses, and closing connections.
+
+Context supports two types of storage: per-message storage that's scoped to a single message and cleared after the handler completes, and per-connection storage that persists for the entire WebSocket connection lifetime. This dual storage model lets you handle both transient request data and persistent connection state efficiently.
 
 ```go
 router.Bind("/user/profile", func(ctx *velaros.Context) {
@@ -349,17 +206,17 @@ router.Bind("/user/profile", func(ctx *velaros.Context) {
 
 **Socket Storage (`ctx.SetOnSocket()`, `ctx.GetFromSocket()`):**
 
-- Connection-specific data (user ID, session ID, auth tokens)
-- Data that SHOULD persist for the entire connection lifetime
+- Connection-level data (user ID, session ID, auth tokens)
+- Data that persists for the entire connection lifetime
 - Authentication state, user preferences, client metadata
-- Thread-safe - can be accessed concurrently from multiple message handlers
-- Cleared only when connection closes
+- Thread-safe - safely accessed concurrently from multiple message handlers
+- Cleared when the connection closes
 
 **Examples:**
 
 ```go
 // Authentication middleware stores user on socket
-router.Use("/api/**", func(ctx *velaros.Context) {
+router.Use("/api", func(ctx *velaros.Context) {
     token := getTokenFromMessage(ctx)
     if user, err := validateToken(token); err == nil {
         ctx.SetOnSocket("user", user)          // Persists across messages
@@ -398,50 +255,32 @@ router.Use(func(ctx *velaros.Context) {
 
 **Accessing Request Headers:**
 
-The Context provides access to HTTP headers from the initial WebSocket handshake request. This is useful for authentication, reading cookies, or accessing custom headers:
+The Context provides access to HTTP headers from the initial WebSocket handshake request. This is useful for authentication:
 
 ```go
 router.UseOpen(func(ctx *velaros.Context) {
-    // Access headers from the initial HTTP upgrade request
-    headers := ctx.Headers()
-
-    // Read Authorization header for JWT token
-    authHeader := headers.Get("Authorization")
-    if authHeader != "" {
+    // Authenticate using Authorization header
+    if authHeader := ctx.Headers().Get("Authorization"); authHeader != "" {
         token := strings.TrimPrefix(authHeader, "Bearer ")
         if user, err := validateJWT(token); err == nil {
             ctx.SetOnSocket("user", user)
             ctx.SetOnSocket("authenticated", true)
         }
     }
-
-    // Read cookies
-    cookie := headers.Get("Cookie")
-    if sessionID := extractSessionID(cookie); sessionID != "" {
-        ctx.SetOnSocket("sessionID", sessionID)
-    }
-
-    // Custom headers
-    clientVersion := headers.Get("X-Client-Version")
-    ctx.SetOnSocket("clientVersion", clientVersion)
-
-    log.Printf("New connection from %s", headers.Get("User-Agent"))
 })
 
-// Protected handler using authentication from headers
+// Protected handler checks authentication
 router.Bind("/admin/users", func(ctx *velaros.Context) {
-    authenticated, _ := ctx.GetFromSocket("authenticated")
-    if authenticated != true {
+    if authenticated, _ := ctx.GetFromSocket("authenticated"); authenticated != true {
         ctx.Send(ErrorResponse{Error: "unauthorized"})
         return
     }
-
-    // Proceed with admin operation
+    
     ctx.Reply(AdminUsersResponse{Users: getUsers()})
 })
 ```
 
-**Note:** Headers are only available from the initial WebSocket handshake. Once the WebSocket connection is established, all communication uses WebSocket frames, not HTTP.
+**Note:** Headers are from the initial WebSocket handshake when the WebSocket connection was established. All communication in handlers uses WebSocket communication, not HTTP.
 
 ### Context Lifecycle
 
@@ -501,7 +340,7 @@ router.Use(func(ctx *velaros.Context) {
 })
 
 // Pattern-specific middleware - runs only for matching paths
-router.Use("/admin/**", func(ctx *velaros.Context) {
+router.Use("/admin", func(ctx *velaros.Context) {
     token, ok := ctx.GetFromSocket("authToken")
     if !ok {
         ctx.Send(ErrorResponse{Error: "unauthorized"})
@@ -653,7 +492,7 @@ ws.onmessage = (event) => {
 
 **When to Use:**
 
-- High-frequency trading or real-time systems
+- Real-time data streaming systems
 - Mobile apps with limited bandwidth
 - IoT devices with constrained resources
 - Game servers with many concurrent connections
@@ -661,15 +500,18 @@ ws.onmessage = (event) => {
 
 ### Protocol Buffers Middleware
 
-Protocol Buffers (protobuf) is Google's language-neutral, platform-neutral serialization format. It provides strong typing, schema validation, and excellent performance with compact binary encoding.
+Protocol Buffers (protobuf) is Google's language-neutral, platform-neutral serialization format. It provides strong typing, schema validation, and excellent performance with compact binary encoding. Protobuf is the gold standard for cross-language communication in distributed systems.
 
 **Why use Protocol Buffers:**
 
-- **Type safety** - Schemas define exact message structure
-- **Language-agnostic** - Use same .proto files across different languages
-- **Efficient binary format** - Smaller and faster than JSON
-- **Schema evolution** - Add fields without breaking existing clients
-- **gRPC compatibility** - Standard format for microservices
+- **Type safety** - Strongly-typed schemas with compile-time validation prevent runtime errors
+- **Language-agnostic** - Same .proto files generate code for Go, Java, Python, C++, JavaScript, and more
+- **Highly efficient** - Compact binary format with minimal overhead, faster than JSON and comparable to MessagePack
+- **Schema evolution** - Add, rename, or deprecate fields without breaking existing clients through field numbering
+- **Backward/forward compatibility** - Older clients work with newer servers and vice versa
+- **Code generation** - Automatically generates serialization code, getters, setters, and builders
+- **gRPC compatibility** - De facto standard for gRPC and modern microservices architectures
+- **Industry standard** - Used by Google, Netflix, Square, and thousands of companies for production systems
 
 **Key Feature:** Work with standard `.proto` files - no Velaros-specific modifications needed. The middleware handles envelope wrapping transparently.
 
@@ -734,6 +576,8 @@ The middleware uses an internal envelope to add routing metadata (`id`, `path`) 
 
 **Client-Side Usage (JavaScript):**
 
+Clients need to wrap messages in the Velaros envelope. The envelope schema is available in the [protobuf package](http://github.com/RobertWHurst/Velaros/blob/master/middleware/protobuf/envelope.proto).
+
 ```javascript
 import protobuf from 'protobufjs';
 
@@ -742,7 +586,7 @@ const root = await protobuf.load('user.proto');
 const CreateUserRequest = root.lookupType('myapp.CreateUserRequest');
 const UserResponse = root.lookupType('myapp.UserResponse');
 
-// Also load Velaros envelope
+// Load Velaros envelope from the protobuf middleware package
 const Envelope = root.lookupType('velaros.protobuf.Envelope');
 
 const ws = new WebSocket('ws://localhost:8080/ws', 'velaros-protobuf');
@@ -784,38 +628,75 @@ ws.onmessage = (event) => {
 - Systems requiring backward/forward compatibility
 - Integration with gRPC services
 
-**Path Format:** Use gRPC-style paths like `/package.Service/Method` or custom paths like `/users/create`. Velaros routing works with any path format.
-
 **Learn More:** [Official Protocol Buffers tutorial](https://protobuf.dev/getting-started/gotutorial/)
 
-### Set Middleware
+### Set Middleware Variants
 
-Provides multiple variants for setting values:
+The Set middleware family lets you store values on the context or socket as middleware. This is useful for setting up common values that multiple handlers need. Each variant takes a key and value/function as parameters.
 
-- **set** - Sets static values on context (per-message scope)
-- **setfn** - Sets computed values on context using a function
-- **setvalue** - Sets dereferenced pointer values on context
-- **socketset** - Sets static values on socket (per-connection scope)
-- **socketsetfn** - Sets computed values on socket
-- **socketsetvalue** - Sets dereferenced pointer values on socket
+**Message-level middleware** (set, setfn, setvalue) stores values scoped to each individual message - values are cleared after the handler completes:
+
+- **set** stores static values on every message - takes a key and value
+- **setfn** calls a function on every message and stores the result - takes a key and function. Useful for values that change per message like request IDs or timestamps
+- **setvalue** dereferences a pointer and stores the value - takes a key and pointer. Useful when the value might change between messages but you want to capture the current value
+
+**Socket-level middleware** (socketset, socketsetfn, socketsetvalue) stores values scoped to the entire connection - values persist across all messages until the connection closes:
+
+- **socketset** stores static values on the connection - takes a key and value
+- **socketsetfn** calls a function once per message and stores the result on the socket - takes a key and function
+- **socketsetvalue** dereferences a pointer and stores the value on the socket - takes a key and pointer
 
 ```go
 import (
     "github.com/RobertWHurst/velaros/middleware/set"
     "github.com/RobertWHurst/velaros/middleware/setfn"
+    "github.com/RobertWHurst/velaros/middleware/setvalue"
     "github.com/RobertWHurst/velaros/middleware/socketset"
+    "github.com/RobertWHurst/velaros/middleware/socketsetfn"
+    "github.com/RobertWHurst/velaros/middleware/socketsetvalue"
 )
 
-// Set static value on each message
-router.Use(set.Middleware("apiVersion", "v1"))
+// Message-level values
+router.Use(set.Middleware("version", "1.0.0"))
 
-// Set computed value on each message
 router.Use(setfn.Middleware("requestID", func() string {
-    return uuid.NewString()
+    return uuid.New().String()
 }))
 
-// Set value on socket (persists across all messages)
-router.Use("/auth/login", socketset.Middleware("authenticated", true))
+maxItems := 100
+router.Use(setvalue.Middleware("maxItems", &maxItems))
+
+// Later, maxItems can be changed and setvalue captures the current value per message
+maxItems = 200
+
+// Socket-level values
+router.UseOpen(socketset.Middleware("region", "us-east"))
+
+router.UseOpen(socketsetfn.Middleware("sessionID", func() string {
+    return uuid.New().String()
+}))
+
+connectionCount := 0
+router.UseOpen(socketsetvalue.Middleware("connectionCount", &connectionCount))
+
+router.Bind("/info", func(ctx *velaros.Context) {
+    version := ctx.Get("version").(string)
+    requestID := ctx.Get("requestID").(string)
+    maxItems := ctx.Get("maxItems").(int) // Gets the dereferenced int value
+    
+    region := ctx.GetFromSocket("region").(string)
+    sessionID := ctx.GetFromSocket("sessionID").(string)
+    connCount := ctx.GetFromSocket("connectionCount").(int)
+    
+    ctx.Reply(InfoResponse{
+        Version:         version,
+        RequestID:       requestID,
+        MaxItems:        maxItems,
+        Region:          region,
+        SessionID:       sessionID,
+        ConnectionCount: connCount,
+    })
+})
 ```
 
 ## Integration with HTTP Servers
@@ -827,6 +708,10 @@ Velaros implements the standard `http.Handler` interface, making it compatible w
 router := velaros.NewRouter()
 http.Handle("/ws", router)
 http.ListenAndServe(":8080", nil)
+
+// Navaros
+httpRouter := navaros.NewRouter()
+httpRouter.Use(router.Middleware())
 
 // Gorilla Mux
 mux := mux.NewRouter()
@@ -845,62 +730,11 @@ e := echo.New()
 e.Any("/ws", echo.WrapHandler(router))
 ```
 
-You can also use it alongside your existing HTTP routes:
+### WebSocket Upgrade
 
-```go
-// Serve both HTTP and WebSocket on the same server
-http.HandleFunc("/", handleHome)
-http.HandleFunc("/api/users", handleUsers)
-http.Handle("/ws", velarosRouter)  // WebSocket endpoint
-http.ListenAndServe(":8080", nil)
-```
+When a client connects to the mounted path, Velaros automatically handles the WebSocket upgrade handshake. If the request is not a WebSocket upgrade request, the router returns a 400 Bad Request error.
 
-### Understanding Router Mounting
-
-**Important:** The path you mount the router on becomes the WebSocket upgrade endpoint. Message paths inside the WebSocket connection are separate and independent.
-
-```go
-// Mount router at /api/ws
-http.Handle("/api/ws", router)
-
-// Clients connect to: ws://localhost:8080/api/ws
-const ws = new WebSocket('ws://localhost:8080/api/ws');
-
-// Once connected, message paths are internal to the WebSocket:
-// These paths are NOT HTTP paths - they're message routes within the WebSocket
-// Using JSON middleware format for this example:
-ws.send(JSON.stringify({
-    path: '/user/profile',  // This is a message path, not an HTTP path
-    data: { userId: '123' }
-}));
-```
-
-**Multiple Routers:**
-
-You can mount multiple independent routers on different paths:
-
-```go
-publicRouter := velaros.NewRouter()
-publicRouter.Bind("/chat", handlePublicChat)
-
-adminRouter := velaros.NewRouter()
-adminRouter.Bind("/users", handleAdminUsers)
-
-// Mount on different paths
-http.Handle("/ws/public", publicRouter)  // ws://host/ws/public
-http.Handle("/ws/admin", adminRouter)    // ws://host/ws/admin
-
-// Each router has independent handlers
-// Messages sent to /ws/public use publicRouter's handlers
-// Messages sent to /ws/admin use adminRouter's handlers
-```
-
-**Key Points:**
-
-- HTTP mount path = WebSocket connection endpoint
-- Message paths (inside WebSocket) = Routing within that connection
-- Multiple routers = Multiple WebSocket endpoints, each independent
-- Once WebSocket is established, all communication uses WebSocket frames (not HTTP)
+**Note:** When using `router.Middleware()` with Navaros, non-WebSocket requests are passed to the next handler in the chain instead of returning an error. This allows you to use Velaros as pathless middleware that automatically upgrades WebSocket requests while allowing HTTP requests to pass through to other handlers.
 
 ## Configuration
 
@@ -940,9 +774,12 @@ router.Bind("/users/:id", func(ctx *velaros.Context) {
 })
 
 // Wildcard matching
-router.Bind("/files/*", func(ctx *velaros.Context) {
-    path := ctx.Path()
-    log.Printf("File request: %s", path)
+router.Bind("/events/**", func(ctx *velaros.Context) {
+    eventPath := ctx.Path() // e.g., "/events/user/login" or "/events/system/alert"
+    log.Printf("Subscribed to: %s", eventPath)
+    
+    // Stream events to client...
+    ctx.Reply(SubscriptionResponse{Status: "subscribed", Path: eventPath})
 })
 ```
 
@@ -976,7 +813,7 @@ This is all most likely overkill, but if you ever need it, it's here.
 
 ### Accessing Route Parameters
 
-Parameters extracted from route patterns are available via `ctx.Params()`, which returns a `MessageParams` type (a map[string]string). Parameter names are case-insensitive when retrieved.
+Parameters extracted from route patterns are available via `ctx.Params()`, which returns a `MessageParams` type. Parameter names are case-insensitive when retrieved.
 
 **Example:**
 
@@ -997,10 +834,10 @@ router.Bind("/users/:userID/posts/:postID", func(ctx *velaros.Context) {
 
 **Key Points:**
 
-- Parameters are always strings - convert to other types as needed
-- Parameter names are case-insensitive (`Get("id")` and `Get("ID")` are equivalent)
+- The `Get()` method does case-insensitive lookups (`Get("id")` and `Get("ID")` are equivalent)
 - If a parameter doesn't exist, `Get()` returns an empty string
-- Parameters are extracted fresh for each message based on the matched route pattern
+- `MessageParams` is a map (`map[string]string`) so if you want to check the original casing or process it in
+your own way you can.
 
 ### Handler and Middleware Ordering
 
@@ -1015,25 +852,16 @@ router.Bind("/album/:name", GetAlbumsByName)
 
 ### PublicBind
 
-For microservice architectures that use API gateways, `PublicBind()` allows you to mark routes as part of your public API. This enables gateway frameworks to discover which routes your service handles so they can route external requests appropriately.
+`PublicBind()` marks routes as part of your public API, making them discoverable by API gateway frameworks for service registration and routing.
 
 ```go
-// Internal route - not announced to gateways
-router.Bind("/internal/metrics", func(ctx *velaros.Context) {
-    // Only accessible within your infrastructure
-})
-
-// Public route - announced to API gateways
-router.PublicBind("/api/users/:id", func(ctx *velaros.Context) {
-    // Discoverable by gateway frameworks
-    userID := ctx.Params().Get("id")
-    ctx.Reply(GetUser(userID))
-})
+router.Bind("/internal/metrics", internalHandler)        // Internal only
+router.PublicBind("/api/users/:id", getUserHandler)      // Publicly discoverable
 ```
 
-The distinction between `Bind()` and `PublicBind()` helps separate your internal infrastructure routes from your external API surface. Gateway frameworks can call `router.RouteDescriptors()` to get a list of all public routes, enabling automatic service discovery and routing.
+Gateway frameworks can call `router.RouteDescriptors()` to discover public routes.
 
-See the "API Gateway Integration" section in Advanced Usage for more details on using this pattern in microservice architectures.
+**Eurus**, a WebSocket API gateway for microservices, is currently in development. Similar to how Zephyr provides HTTP API gateway functionality for Navaros-based services, Eurus will provide WebSocket API gateway capabilities for Velaros-based services. It will automatically discover public routes, handle client connections, and route messages to the appropriate backend services in your infrastructure.
 
 ### Route Introspection
 
@@ -1080,6 +908,7 @@ path, _ := pattern.Path(nil, []string{"documents/report.pdf"})
 ```
 
 This is useful for:
+
 - Generating client message paths dynamically
 - Building reverse routing / URL generation
 - Creating links in API responses
@@ -1117,7 +946,7 @@ router.UseOpen(func(ctx *velaros.Context) {
 
 ### UseClose
 
-`UseClose()` registers middleware that executes when a WebSocket connection is closing, after the message loop exits. This is useful for cleanup, logging, or notifying other systems about disconnections. UseClose middleware can still send messages to the client before the connection closes.
+`UseClose()` registers middleware that executes when a WebSocket connection is closing, after the message loop exits. This is useful for cleanup, logging, or notifying other systems about disconnections. If closed server-side, UseClose middleware can still send messages to the client before the connection closes.
 
 ```go
 router.UseClose(func(ctx *velaros.Context) {
@@ -1166,14 +995,14 @@ router.Bind("/kick", func(ctx *velaros.Context) {
 router.UseClose(func(ctx *velaros.Context) {
     status, reason, source := ctx.CloseStatus()
 
-    if source == velaros.StatusSourceClient {
+    if source == velaros.ClientCloseSource {
         log.Printf("Client closed connection with status %d: %s", status, reason)
     } else {
         log.Printf("Server closed connection with status %d: %s", status, reason)
     }
 
     // Can still send farewell messages (for server-initiated closes)
-    if source == velaros.StatusSourceServer {
+    if source == velaros.ServerCloseSource {
         ctx.Send(GoodbyeMessage{Message: "Connection closed by server"})
     }
 })
@@ -1263,19 +1092,24 @@ Unlike HTTP, WebSocket connections are bidirectional - the server can send messa
 Use `Send()` to send a message without expecting a response, or `Reply()` to respond to a message that includes an ID:
 
 ```go
-router.Bind("/notify", func(ctx *velaros.Context) {
-    // Reply to the original message (preserves message ID)
-    ctx.Reply(AckResponse{Status: "received"})
-
-    // Later, send additional messages
-    time.Sleep(time.Second)
-    ctx.Send(NotificationMessage{Text: "Processing complete"})
+router.Bind("/process", func(ctx *velaros.Context) {
+    var req ProcessRequest
+    ctx.Unmarshal(&req)
+    
+    // Reply immediately with acknowledgment
+    ctx.Reply(AckResponse{Status: "processing"})
+    
+    // Process the request
+    result := performProcessing(req)
+    
+    // Send additional message with result
+    ctx.Send(ProcessComplete{Result: result})
 })
 ```
 
 ### Request and Response
 
-The server can initiate requests to clients and wait for responses using the `Request()` family of methods:
+The server can initiate requests to clients and wait for responses using the `Request()` family of methods. The default timeout is 5 seconds, but can be overridden using the timeout variants:
 
 ```go
 type ConfirmRequest struct {
@@ -1313,7 +1147,7 @@ router.Bind("/delete/:id", func(ctx *velaros.Context) {
 
 ### Typed Requests with RequestInto
 
-For cleaner code, use `RequestInto()` which automatically unmarshals the response:
+For cleaner code, use `RequestInto()` which automatically unmarshals the response. Note that it has a 5 second timeout:
 
 ```go
 router.Bind("/delete/:id", func(ctx *velaros.Context) {
@@ -1336,7 +1170,7 @@ router.Bind("/delete/:id", func(ctx *velaros.Context) {
 
 ### Request Timeouts and Cancellation
 
-Control request timeouts and cancellation using context-aware variants:
+To override the default timeout of 5 seconds or use a context instead, use these request methods:
 
 ```go
 // Custom timeout
@@ -1466,64 +1300,50 @@ When handlers block (like the broadcasting pattern above), proper cleanup is cri
 - Closes when the WebSocket connection closes (client or server initiated)
 - Signals your handler to stop and cleanup
 - Works with Go's `select` statement for clean shutdown
-- Same as `context.Context.Done()` - Velaros implements the standard interface
+- Velaros Context implements Go's `context.Context` interface and can be passed to I/O operations (database queries, HTTP requests, etc.) to ensure they're cancelled when the connection closes
+- `ctx.Done()` works like the standard library's cancellation pattern
 
 ## Advanced Usage
 
 ### Authentication
 
-Authentication state can be stored at the socket level so it persists across all messages from that connection. Use helper functions to check authentication state in your handlers.
+Authentication state can be stored at the socket level so it persists across all messages from that connection. Use `UseOpen` to authenticate during the WebSocket handshake by reading headers (like Authorization tokens), then protect routes with middleware that checks authentication state.
 
 ```go
-type LoginRequest struct {
-    Username string `json:"username"`
-    Password string `json:"password"`
-}
-
-type LoginResponse struct {
-    Token string `json:"token"`
-}
-
-type UserProfile struct {
-    Email string `json:"email"`
-    Name  string `json:"name"`
-}
-
-// Helper function to check if socket is authenticated
-func isAuthenticated(ctx *velaros.Context) bool {
-    _, ok := ctx.GetFromSocket("authToken")
-    return ok
-}
-
-// Helper function to get authenticated username
-func getUsername(ctx *velaros.Context) (string, bool) {
-    username, ok := ctx.GetFromSocket("username")
-    if !ok {
-        return "", false
-    }
-    return username.(string), true
-}
-
-// Login handler - stores auth info on socket
-router.Bind("/auth/login", func(ctx *velaros.Context) {
-    var req LoginRequest
-    if err := ctx.Unmarshal(&req); err != nil {
-        ctx.Send(ErrorResponse{Error: "invalid request"})
+// Authenticate during connection setup using headers
+router.UseOpen(func(ctx *velaros.Context) {
+    authHeader := ctx.Headers().Get("Authorization")
+    if authHeader == "" {
+        ctx.CloseWithStatus(velaros.StatusPolicyViolation, "missing auth token")
         return
     }
 
-    if validateCredentials(req.Username, req.Password) {
-        token := generateToken(req.Username)
-
-        // Store authentication on socket (persists for connection lifetime)
-        ctx.SetOnSocket("authToken", token)
-        ctx.SetOnSocket("username", req.Username)
-
-        ctx.Reply(LoginResponse{Token: token})
-    } else {
-        ctx.Send(ErrorResponse{Error: "invalid credentials"})
+    token := strings.TrimPrefix(authHeader, "Bearer ")
+    user, err := validateToken(token)
+    if err != nil {
+        ctx.CloseWithStatus(velaros.StatusPolicyViolation, "invalid token")
+        return
     }
+
+    // Store authentication on socket (persists for connection lifetime)
+    ctx.SetOnSocket("user", user)
+    ctx.SetOnSocket("authenticated", true)
 })
+
+// Helper function to check if socket is authenticated
+func isAuthenticated(ctx *velaros.Context) bool {
+    authenticated, _ := ctx.GetFromSocket("authenticated")
+    return authenticated == true
+}
+
+// Helper function to get authenticated user
+func getUser(ctx *velaros.Context) (*User, bool) {
+    user, ok := ctx.GetFromSocket("user")
+    if !ok {
+        return nil, false
+    }
+    return user.(*User), true
+}
 
 // Protected handler - uses helper to check auth
 router.Bind("/user/profile", func(ctx *velaros.Context) {
@@ -1532,9 +1352,8 @@ router.Bind("/user/profile", func(ctx *velaros.Context) {
         return
     }
 
-    username, _ := getUsername(ctx)
-    profile := getUserProfile(username)
-    ctx.Reply(UserProfile{Email: profile.Email, Name: profile.Name})
+    user, _ := getUser(ctx)
+    ctx.Reply(UserProfile{Email: user.Email, Name: user.Name})
 })
 ```
 
@@ -1589,83 +1408,9 @@ Once an error is set (either explicitly or via panic), subsequent handlers in th
 
 ### API Gateway Integration
 
-In microservice architectures, you often want to expose some WebSocket routes publicly through an API gateway while keeping others internal for service-to-service communication. Velaros supports this pattern through `PublicBind()` and route descriptors.
+Velaros provides `PublicBind()` for marking routes as part of your public API, enabling API gateway frameworks to discover which routes your service handles for automatic service registration and routing. Gateway frameworks can call `router.RouteDescriptors()` to retrieve all public routes.
 
-**The Problem:**
-
-When building distributed systems, you need a way to:
-
-- Separate public API routes from internal infrastructure routes
-- Enable API gateways to discover which routes each service handles
-- Route external WebSocket connections to the correct backend service
-
-**The Solution:**
-Use `PublicBind()` to mark routes that should be exposed through your gateway. The router collects these as route descriptors, which gateway frameworks can use for service discovery and routing.
-
-```go
-// Service A: User management service
-userRouter := velaros.NewRouter()
-userRouter.Use(json.Middleware())
-
-// Public route - exposed through gateway
-userRouter.PublicBind("/users/:id", func(ctx *velaros.Context) {
-    userID := ctx.Params().Get("id")
-    user := getUserByID(userID)
-    ctx.Reply(user)
-})
-
-// Internal route - only accessible within infrastructure
-userRouter.Bind("/internal/health", func(ctx *velaros.Context) {
-    ctx.Reply(HealthStatus{OK: true})
-})
-
-// The gateway can discover public routes
-descriptors := userRouter.RouteDescriptors()
-// Returns: [RouteDescriptor{Pattern: "/users/:id"}]
-// Note: /internal/health is NOT included
-```
-
-**Nested Routers:**
-When you mount one router inside another using `PublicBind()`, the parent router collects all route descriptors from the child, with paths properly prefixed:
-
-```go
-// Create service-specific router
-usersRouter := velaros.NewRouter()
-usersRouter.PublicBind("/profile", GetUserProfile)
-usersRouter.PublicBind("/settings", GetUserSettings)
-
-// Mount at /users path
-mainRouter := velaros.NewRouter()
-mainRouter.PublicBind("/users/**", usersRouter)
-
-// mainRouter.RouteDescriptors() returns:
-// - /users/profile
-// - /users/settings
-```
-
-**How Gateways Use This:**
-
-Gateway frameworks like the upcoming Eurus can:
-
-1. Connect to your service over a transport (NATS, local, etc.)
-2. Call `RouteDescriptors()` to discover what routes the service handles
-3. Build a routing table mapping external paths to backend services
-4. Forward incoming WebSocket connections to the appropriate service
-
-**When to Use:**
-
-- Building microservice architectures with multiple WebSocket services
-- Need API gateway for external traffic routing
-- Want to hide internal infrastructure endpoints
-- Deploying services that announce their capabilities dynamically
-
-**When Not to Use:**
-
-- Single-service deployments
-- All routes are public (just use `Bind()`)
-- Not using an API gateway framework
-
-This pattern enables building scalable, distributed WebSocket systems where services can be discovered and routed automatically, without manual gateway configuration.
+See the [PublicBind section](#publicbind) in Routing for details and examples. API gateway integration will be fully supported when **Eurus** (WebSocket API gateway) is released.
 
 ## Message Types
 
@@ -1752,377 +1497,77 @@ router.Bind("/user/profile", func(ctx *velaros.Context) {
 - Always check `ctx.Done()` in blocking loops to detect connection closure
 - Handlers that block should use `select` with `ctx.Done()` for cleanup
 
-### Persistent Connections
+## Use with Navaros
 
-```go
-// Handlers can send messages at any time, not just in responses
-router.Bind("/subscribe/updates", func(ctx *velaros.Context) {
-    // Acknowledge subscription
-    ctx.Reply(SuccessResponse{Status: "subscribed"})
-
-    // Later, when an event occurs (triggered by external system):
-    // - Use a message queue (Redis, NATS, Kafka, etc.)
-    // - Subscribe to events in your handler
-    // - Send updates to client when events arrive
-
-    // Example with a channel (for single-server setups):
-    userID, _ := ctx.GetFromSocket("userID")
-    updatesChan := subscribeToUpdates(userID)
-    go func() {
-        for update := range updatesChan {
-            ctx.Send(UpdateMessage{Data: update})
-        }
-    }()
-})
-```
-
-## Examples
-
-**Note:** These examples use JSON middleware for clarity and simplicity. You can substitute MessagePack or Protocol Buffers middleware depending on your needs.
-
-### Basic Echo Server
-
-```go
-package main
-
-import (
-    "log"
-    "net/http"
-
-    "github.com/RobertWHurst/velaros"
-    "github.com/RobertWHurst/velaros/middleware/json"
-)
-
-type EchoRequest struct {
-    Message string `json:"message"`
-}
-
-type EchoResponse struct {
-    Echo string `json:"echo"`
-}
-
-func main() {
-    router := velaros.NewRouter()
-    router.Use(json.Middleware())
-
-    router.Bind("/echo", func(ctx *velaros.Context) {
-        var req EchoRequest
-        if err := ctx.Unmarshal(&req); err != nil {
-            return
-        }
-        ctx.Reply(EchoResponse{Echo: req.Message})
-    })
-
-    log.Println("Echo server listening on :8080")
-    http.ListenAndServe(":8080", router)
-}
-```
-
-### Chat Room
-
-```go
-package main
-
-import (
-    "log"
-    "net/http"
-    "sync"
-
-    "github.com/RobertWHurst/velaros"
-    "github.com/RobertWHurst/velaros/middleware/json"
-)
-
-type JoinRequest struct {
-    Username string `json:"username"`
-}
-
-type ChatMessage struct {
-    Username string `json:"username"`
-    Text     string `json:"text"`
-}
-
-type Broadcast struct {
-    From string `json:"from"`
-    Text string `json:"text"`
-}
-
-var (
-    clients   = make(map[string]*velaros.Context)
-    clientsMx sync.Mutex
-)
-
-func broadcast(msg Broadcast) {
-    clientsMx.Lock()
-    defer clientsMx.Unlock()
-
-    for _, client := range clients {
-        client.Send(msg)
-    }
-}
-
-func main() {
-    router := velaros.NewRouter()
-    router.Use(json.Middleware())
-
-    router.Bind("/join", func(ctx *velaros.Context) {
-        var req JoinRequest
-        if err := ctx.Unmarshal(&req); err != nil {
-            return
-        }
-
-        ctx.SetOnSocket("username", req.Username)
-
-        clientsMx.Lock()
-        clients[ctx.SocketID()] = ctx
-        clientsMx.Unlock()
-
-        log.Printf("%s joined", req.Username)
-    })
-
-    router.Bind("/message", func(ctx *velaros.Context) {
-        var msg ChatMessage
-        if err := ctx.Unmarshal(&msg); err != nil {
-            return
-        }
-
-        username := ctx.MustGetFromSocket("username").(string)
-        broadcast(Broadcast{
-            From: username,
-            Text: msg.Text,
-        })
-    })
-
-    log.Println("Chat server listening on :8080")
-    http.ListenAndServe(":8080", router)
-}
-```
-
-### Request/Reply Pattern
-
-```go
-package main
-
-import (
-    "log"
-    "net/http"
-    "time"
-
-    "github.com/RobertWHurst/velaros"
-    "github.com/RobertWHurst/velaros/middleware/json"
-)
-
-type PingRequest struct {
-    Timestamp int64 `json:"timestamp"`
-}
-
-type PongResponse struct {
-    Timestamp int64 `json:"timestamp"`
-    Latency   int64 `json:"latency"`
-}
-
-func main() {
-    router := velaros.NewRouter()
-    router.Use(json.Middleware())
-
-    router.Bind("/ping", func(ctx *velaros.Context) {
-        var req PingRequest
-        if err := ctx.Unmarshal(&req); err != nil {
-            return
-        }
-
-        now := time.Now().UnixMilli()
-        latency := now - req.Timestamp
-
-        ctx.Reply(PongResponse{
-            Timestamp: now,
-            Latency:   latency,
-        })
-    })
-
-    log.Println("Ping server listening on :8080")
-    http.ListenAndServe(":8080", router)
-}
-```
-
-## HTTP Routing
-
-Velaros can be combined with [Navaros](https://github.com/RobertWHurst/Navaros), an HTTP router that brings the same routing and middleware patterns to HTTP requests. This lets you serve both HTTP and WebSocket traffic from the same server with a consistent API.
-
-### Mounting HTTP Routes
-
-Velaros routers implement `http.Handler`, so they can be mounted directly on Navaros or any HTTP router:
+[Navaros](https://github.com/RobertWHurst/Navaros) is Velaros's sister HTTP framework, bringing the same routing patterns, middleware structure, and context-based approach to HTTP requests. Together, they provide a unified API for building applications that handle both HTTP and WebSocket traffic.
 
 ```go
 import (
     "github.com/RobertWHurst/navaros"
     "github.com/RobertWHurst/velaros"
-    njson "github.com/RobertWHurst/navaros/middleware/json"
-    vjson "github.com/RobertWHurst/velaros/middleware/json"
 )
 
 // Create HTTP router
 httpRouter := navaros.NewRouter()
-httpRouter.Use(njson.Middleware(nil))
+httpRouter.Get("/api/users/:id", func(ctx *navaros.Context) {
+    ctx.Body = getUserByID(ctx.Params()["id"])
+})
 
 // Create WebSocket router
 wsRouter := velaros.NewRouter()
-wsRouter.Use(vjson.Middleware())
-
-// Add HTTP routes
-httpRouter.Get("/api/users/:id", func(ctx *navaros.Context) {
-    userID := ctx.Params()["id"]
-    ctx.Body = getUserByID(userID)
-})
-
-// Add WebSocket routes
 wsRouter.Bind("/users/:id/status", func(ctx *velaros.Context) {
-    userID := ctx.Params().Get("id")
-    
-    subscription := statusUpdates.Subscribe(userID)
-    defer subscription.Unsubscribe()
-    
-    ctx.Reply(SubscribeResponse{Status: "subscribed"})
-    
-    for {
-        select {
-        case update := <-subscription.Updates():
-            ctx.Send(StatusUpdate{Status: update})
-        case <-ctx.Done():
-            return
-        }
-    }
+    // Stream real-time status updates...
 })
 
-// Mount WebSocket router on HTTP router
-httpRouter.Get("/ws", wsRouter)
+// Mount WebSocket on HTTP router
+httpRouter.Use("/ws", wsRouter.Middleware())
 
 http.ListenAndServe(":8080", httpRouter)
 ```
 
-### Shared Patterns and Concepts
+**Key similarities:**
+- Identical pattern syntax for routing (`/users/:id`, `/files/**`)
+- Same middleware structure with `ctx.Next()` and pattern-scoped middleware
+- Context-based storage (`ctx.Set()`, `ctx.Get()`)
+- Consistent handler signatures and control flow
 
-Both routers use identical pattern syntax and middleware concepts:
-
-**Routing Patterns:**
-
-```go
-// HTTP routing
-httpRouter.Get("/users/:id", getUserHandler)
-httpRouter.Post("/files/**", uploadHandler)
-
-// WebSocket routing - same pattern syntax
-wsRouter.Bind("/users/:id", getUserMessageHandler)
-wsRouter.Bind("/files/**", fileMessageHandler)
-```
-
-**Middleware:**
-
-```go
-// HTTP middleware
-httpRouter.Use("/admin/**", func(ctx *navaros.Context) {
-    if !authenticated(ctx) {
-        ctx.Status = http.StatusUnauthorized
-        return
-    }
-    ctx.Next()
-})
-
-// WebSocket middleware - same structure
-wsRouter.Use("/admin/**", func(ctx *velaros.Context) {
-    if !authenticated(ctx) {
-        ctx.Send(ErrorResponse{Error: "unauthorized"})
-        return
-    }
-    ctx.Next()
-})
-```
-
-**Context Storage:**
-
-Both routers provide context storage with similar semantics:
-
-```go
-// HTTP: per-request storage (cleared after request completes)
-httpRouter.Use(func(ctx *navaros.Context) {
-    ctx.Set("requestID", generateID())
-    ctx.Next()
-})
-
-// WebSocket: per-message storage (cleared after message processing completes)
-wsRouter.Use(func(ctx *velaros.Context) {
-    ctx.Set("messageID", generateID())
-    ctx.Next()
-})
-
-// WebSocket: per-connection storage (persists for the connection lifetime)
-wsRouter.UseOpen(func(ctx *velaros.Context) {
-    ctx.SetOnSocket("sessionID", generateID())
-})
-```
+For complete documentation, see [Navaros on GitHub](https://github.com/RobertWHurst/Navaros).
 
 ## Testing
 
-Test your handlers using `httptest` from the standard library and a WebSocket client. Create a test server, connect a client, send messages, and assert on the responses.
+Test handlers using `httptest` and a WebSocket client:
 
 ```go
-import (
-	"context"
-	"encoding/json"
-	"net/http/httptest"
-	"testing"
-	
-	"github.com/RobertWHurst/velaros"
-	"github.com/RobertWHurst/velaros/middleware/json"
-	"github.com/coder/websocket"
-)
-
-func TestHandler(t *testing.T) {
-	router := velaros.NewRouter()
-	router.Use(json.Middleware())
-	
-	router.Bind("/echo", func(ctx *velaros.Context) {
-		var req map[string]string
-		ctx.Unmarshal(&req)
-		ctx.Reply(map[string]string{"echo": req["message"]})
-	})
-	
-	server := httptest.NewServer(router)
-	defer server.Close()
-	
-	ctx := context.Background()
-	conn, _, _ := websocket.Dial(ctx, server.URL, nil)
-	defer conn.Close(websocket.StatusNormalClosure, "")
-	
-	// Send message
-	msg := map[string]any{
-		"path": "/echo",
-		"id":   "123",
-		"data": map[string]string{"message": "hello"},
-	}
-	msgBytes, _ := json.Marshal(msg)
-	conn.Write(ctx, websocket.MessageText, msgBytes)
-	
-	// Read response
-	_, respBytes, _ := conn.Read(ctx)
-	var response map[string]any
-	json.Unmarshal(respBytes, &response)
-	
-	if response["id"] != "123" {
-		t.Errorf("expected id '123', got %v", response["id"])
-	}
-	
-	data := response["data"].(map[string]any)
-	if data["echo"] != "hello" {
-		t.Errorf("expected echo 'hello', got %v", data["echo"])
-	}
+func TestEchoHandler(t *testing.T) {
+    router := velaros.NewRouter()
+    router.Use(json.Middleware())
+    
+    router.Bind("/echo", func(ctx *velaros.Context) {
+        var req EchoRequest
+        ctx.Unmarshal(&req)
+        ctx.Reply(EchoResponse{Message: req.Message})
+    })
+    
+    // Create test server
+    server := httptest.NewServer(router)
+    defer server.Close()
+    
+    // Connect WebSocket client
+    ctx := context.Background()
+    conn, _, _ := websocket.Dial(ctx, server.URL, nil)
+    defer conn.Close(websocket.StatusNormalClosure, "")
+    
+    // Send message
+    sendMessage(conn, "/echo", "123", EchoRequest{Message: "hello"})
+    
+    // Assert response
+    var response EchoResponse
+    readMessage(conn, &response)
+    
+    if response.Message != "hello" {
+        t.Errorf("expected 'hello', got '%s'", response.Message)
+    }
 }
-```
-
-Run tests:
-
-```bash
-go test ./...
-go test -cover ./...
 ```
 
 ## Help Welcome
@@ -2134,8 +1579,6 @@ If you want to support this project by throwing me some coffee money it's greatl
 If you're interested in providing feedback or would like to contribute please feel free to do so. I recommend first opening an issue expressing your feedback or intent to contribute a change, from there we can consider your feedback or guide your contribution efforts. Any and all help is greatly appreciated since this is an open source effort after all.
 
 Thank you!
-
-[feature-request]: https://github.com/RobertWHurst/Velaros/issues/new?template=feature_request.md
 
 ## License
 

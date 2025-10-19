@@ -720,7 +720,7 @@ func TestContextCloseWithStatus(t *testing.T) {
 	closeChan := make(chan struct {
 		Status velaros.Status
 		Reason string
-		Source velaros.StatusSource
+		Source velaros.CloseSource
 	}, 1)
 
 	router.Bind("/close-with-status", func(ctx *velaros.Context) {
@@ -732,7 +732,7 @@ func TestContextCloseWithStatus(t *testing.T) {
 		closeChan <- struct {
 			Status velaros.Status
 			Reason string
-			Source velaros.StatusSource
+			Source velaros.CloseSource
 		}{status, reason, source}
 	})
 
@@ -749,8 +749,8 @@ func TestContextCloseWithStatus(t *testing.T) {
 		if closeInfo.Reason != "bye bye" {
 			t.Errorf("expected reason 'bye bye', got %q", closeInfo.Reason)
 		}
-		if closeInfo.Source != velaros.StatusSourceServer {
-			t.Errorf("expected StatusSourceServer, got %d", closeInfo.Source)
+		if closeInfo.Source != velaros.ServerCloseSource {
+			t.Errorf("expected ServerCloseSource, got %d", closeInfo.Source)
 		}
 	case <-time.After(10 * time.Second):
 		t.Error("expected UseClose handler to be called")
@@ -799,7 +799,7 @@ func TestClientInitiatedClose(t *testing.T) {
 	closeChan := make(chan struct {
 		Status velaros.Status
 		Reason string
-		Source velaros.StatusSource
+		Source velaros.CloseSource
 	}, 1)
 
 	router.UseClose(func(ctx *velaros.Context) {
@@ -807,7 +807,7 @@ func TestClientInitiatedClose(t *testing.T) {
 		closeChan <- struct {
 			Status velaros.Status
 			Reason string
-			Source velaros.StatusSource
+			Source velaros.CloseSource
 		}{status, reason, source}
 		wg.Done()
 	})
@@ -830,8 +830,8 @@ func TestClientInitiatedClose(t *testing.T) {
 		if closeInfo.Status != velaros.StatusGoingAway {
 			t.Errorf("expected StatusGoingAway (1001), got %d", closeInfo.Status)
 		}
-		if closeInfo.Source != velaros.StatusSourceClient {
-			t.Errorf("expected StatusSourceClient, got %d", closeInfo.Source)
+		if closeInfo.Source != velaros.ClientCloseSource {
+			t.Errorf("expected ClientCloseSource, got %d", closeInfo.Source)
 		}
 		// Note: Close reason extraction from error message may not work perfectly
 		// The important part is that UseClose runs and can read the status

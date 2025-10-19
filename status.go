@@ -24,10 +24,10 @@ const (
 	StatusTLSHandshake            Status = websocket.StatusTLSHandshake            // 1015
 )
 
-// StatusSource indicates which side initiated the connection close.
-type StatusSource int
+// CloseSource indicates which side initiated the connection close.
+type CloseSource int
 
 const (
-	StatusSourceServer StatusSource = iota
-	StatusSourceClient
+	ClientCloseSource CloseSource = iota
+	ServerCloseSource
 )

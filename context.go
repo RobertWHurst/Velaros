@@ -17,6 +17,11 @@ import (
 // specifying a timeout.
 const DefaultRequestTimeout = 5 * time.Second
 
+// ErrContextFreed is returned when attempting to use a Context after its handler
+// has returned. Context objects are pooled and reused, so handlers must block
+// until all operations using the context are complete.
+var ErrContextFreed = errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+
 // Context represents the context of a WebSocket message being processed. It
 // provides access to the message data, connection state, and methods for
 // sending responses. Context implements Go's context.Context interface for
@@ -233,7 +238,7 @@ func (c *Context) GetFromSocket(key string) (any, bool) {
 // Panics if the key is not found. Use this when the value is expected to exist.
 func (c *Context) MustGetFromSocket(key string) any {
 	if c.socket == nil {
-		panic("context cannot be used after handler returns - handlers must block until all operations complete")
+		panic(ErrContextFreed)
 	}
 	return c.socket.mustGet(key)
 }
@@ -392,7 +397,7 @@ func (c *Context) SetMessageData(data []byte) {
 //	ctx.Send(NotificationMessage{Type: "user_online", UserID: "123"})
 func (c *Context) Send(data any) error {
 	if c.socket == nil {
-		return errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+		return ErrContextFreed
 	}
 	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
 		Data: data,
@@ -416,7 +421,7 @@ func (c *Context) Send(data any) error {
 //	ctx.Reply(GetUserResponse{User: user})
 func (c *Context) Reply(data any) error {
 	if c.socket == nil {
-		return errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+		return ErrContextFreed
 	}
 	if c.MessageID() == "" {
 		return errors.New("cannot reply to a message without an ID")
@@ -452,7 +457,7 @@ func (c *Context) Request(data any) (any, error) {
 // RequestWithTimeout is like Request but allows specifying a custom timeout duration.
 func (c *Context) RequestWithTimeout(data any, timeout time.Duration) (any, error) {
 	if c.socket == nil {
-		return nil, errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+		return nil, ErrContextFreed
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, timeout)
 	defer cancel()
@@ -464,7 +469,7 @@ func (c *Context) RequestWithTimeout(data any, timeout time.Duration) (any, erro
 // deadlines, and value propagation.
 func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error) {
 	if c.socket == nil {
-		return nil, errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+		return nil, ErrContextFreed
 	}
 	id := uuid.NewString()
 
@@ -520,7 +525,7 @@ func (c *Context) RequestInto(data any, into any) error {
 // RequestIntoWithTimeout is like RequestInto but allows specifying a custom timeout duration.
 func (c *Context) RequestIntoWithTimeout(data any, into any, timeout time.Duration) error {
 	if c.socket == nil {
-		return errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+		return ErrContextFreed
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, timeout)
 	defer cancel()
@@ -530,7 +535,7 @@ func (c *Context) RequestIntoWithTimeout(data any, into any, timeout time.Durati
 // RequestIntoWithContext is like RequestInto but accepts a custom context for cancellation.
 func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any) error {
 	if c.socket == nil {
-		return errors.New("context cannot be used after handler returns - handlers must block until all operations complete")
+		return ErrContextFreed
 	}
 	id := uuid.NewString()
 
@@ -569,7 +574,7 @@ func (c *Context) Close() {
 	if c.socket == nil {
 		return
 	}
-	c.socket.close(StatusNormalClosure, "", StatusSourceServer)
+	c.socket.close(StatusNormalClosure, "", ServerCloseSource)
 }
 
 // CloseWithStatus closes the WebSocket connection with a specific status code
@@ -589,7 +594,7 @@ func (c *Context) CloseWithStatus(status Status, reason string) {
 	if c.socket == nil {
 		return
 	}
-	c.socket.close(status, reason, StatusSourceServer)
+	c.socket.close(status, reason, ServerCloseSource)
 }
 
 // CloseStatus returns the close status code, reason, and source (client or server)
@@ -599,17 +604,17 @@ func (c *Context) CloseWithStatus(status Status, reason string) {
 // Returns:
 //   - Status: The WebSocket close status code
 //   - string: The close reason (may be empty)
-//   - StatusSource: Whether the close was initiated by the server or client
+//   - CloseSource: Whether the close was initiated by the server or client
 //
 // Example:
 //
 //	router.UseClose(func(ctx *velaros.Context) {
 //	    status, reason, source := ctx.CloseStatus()
-//	    if source == velaros.StatusSourceClient {
+//	    if source == velaros.ClientCloseSource {
 //	        log.Printf("Client closed connection: %d %s", status, reason)
 //	    }
 //	})
-func (c *Context) CloseStatus() (Status, string, StatusSource) {
+func (c *Context) CloseStatus() (Status, string, CloseSource) {
 	if c.socket == nil {
 		return 0, "", 0
 	}
