@@ -681,10 +681,13 @@ func TestContextCloseStopsMessageLoop(t *testing.T) {
 	router, server := setupRouter()
 	defer server.Close()
 
-	messagesReceived := 0
+	var messagesReceived int
+	var mu sync.Mutex
 
 	router.Bind("/first", func(ctx *velaros.Context) {
+		mu.Lock()
 		messagesReceived++
+		mu.Unlock()
 		if err := ctx.Send(testMessage{Msg: "first"}); err != nil {
 			t.Errorf("send failed: %v", err)
 		}
@@ -692,7 +695,9 @@ func TestContextCloseStopsMessageLoop(t *testing.T) {
 	})
 
 	router.Bind("/second", func(ctx *velaros.Context) {
+		mu.Lock()
 		messagesReceived++
+		mu.Unlock()
 		if err := ctx.Send(testMessage{Msg: "second"}); err != nil {
 			t.Errorf("send failed: %v", err)
 		}
@@ -706,10 +711,14 @@ func TestContextCloseStopsMessageLoop(t *testing.T) {
 
 	writeMessage(t, conn, ctx, "", "/second", nil)
 
-	time.Sleep(50 * time.Millisecond)
+	time.Sleep(100 * time.Millisecond)
 
-	if messagesReceived != 1 {
-		t.Errorf("expected only 1 message to be received, got %d", messagesReceived)
+	mu.Lock()
+	received := messagesReceived
+	mu.Unlock()
+
+	if received != 1 {
+		t.Errorf("expected only 1 message to be received, got %d", received)
 	}
 }
 
