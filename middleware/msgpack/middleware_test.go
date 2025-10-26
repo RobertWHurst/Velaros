@@ -192,3 +192,220 @@ func TestMessagePackMiddleware_ProtocolValidation_Empty(t *testing.T) {
 		t.Fatalf("unexpected error: %v", ctx.Error)
 	}
 }
+
+func TestMessagePackMiddleware_Marshaller_ErrorType(t *testing.T) {
+	outMsg := &velaros.OutboundMessage{
+		ID:   "reply-123",
+		Data: Error("something went wrong"),
+	}
+
+	marshaller := func(message *velaros.OutboundMessage) ([]byte, error) {
+		switch v := message.Data.(type) {
+		case Error:
+			message.Data = M{"error": string(v)}
+		}
+		envelope := map[string]any{}
+		if message.ID != "" {
+			envelope["id"] = message.ID
+		}
+		if message.Data != nil {
+			envelope["data"] = message.Data
+		}
+		return msgpack.Marshal(envelope)
+	}
+
+	resultBytes, err := marshaller(outMsg)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var envelope map[string]any
+	if err := msgpack.Unmarshal(resultBytes, &envelope); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if envelope["id"] != "reply-123" {
+		t.Errorf("expected id 'reply-123', got %v", envelope["id"])
+	}
+
+	data, ok := envelope["data"].(map[string]any)
+	if !ok {
+		t.Fatal("expected data to be a map")
+	}
+
+	if data["error"] != "something went wrong" {
+		t.Errorf("expected error 'something went wrong', got %v", data["error"])
+	}
+}
+
+func TestMessagePackMiddleware_Marshaller_StringType(t *testing.T) {
+	outMsg := &velaros.OutboundMessage{
+		Data: "hello world",
+	}
+
+	marshaller := func(message *velaros.OutboundMessage) ([]byte, error) {
+		switch v := message.Data.(type) {
+		case string:
+			message.Data = M{"message": v}
+		}
+		envelope := map[string]any{}
+		if message.ID != "" {
+			envelope["id"] = message.ID
+		}
+		if message.Data != nil {
+			envelope["data"] = message.Data
+		}
+		return msgpack.Marshal(envelope)
+	}
+
+	resultBytes, err := marshaller(outMsg)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var envelope map[string]any
+	if err := msgpack.Unmarshal(resultBytes, &envelope); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	data, ok := envelope["data"].(map[string]any)
+	if !ok {
+		t.Fatal("expected data to be a map")
+	}
+
+	if data["message"] != "hello world" {
+		t.Errorf("expected message 'hello world', got %v", data["message"])
+	}
+}
+
+func TestMessagePackMiddleware_Marshaller_SingleFieldError(t *testing.T) {
+	outMsg := &velaros.OutboundMessage{
+		Data: FieldError{Field: "email", Error: "invalid email format"},
+	}
+
+	marshaller := func(message *velaros.OutboundMessage) ([]byte, error) {
+		switch v := message.Data.(type) {
+		case FieldError:
+			message.Data = M{
+				"error":  "Validation error",
+				"fields": genFieldsField([]FieldError{v}),
+			}
+		}
+		envelope := map[string]any{}
+		if message.ID != "" {
+			envelope["id"] = message.ID
+		}
+		if message.Data != nil {
+			envelope["data"] = message.Data
+		}
+		return msgpack.Marshal(envelope)
+	}
+
+	resultBytes, err := marshaller(outMsg)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var envelope map[string]any
+	if err := msgpack.Unmarshal(resultBytes, &envelope); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	data, ok := envelope["data"].(map[string]any)
+	if !ok {
+		t.Fatal("expected data to be a map")
+	}
+
+	if data["error"] != "Validation error" {
+		t.Errorf("expected error 'Validation error', got %v", data["error"])
+	}
+
+	fields, ok := data["fields"].([]any)
+	if !ok {
+		t.Fatal("expected fields to be an array")
+	}
+
+	if len(fields) != 1 {
+		t.Fatalf("expected 1 field error, got %d", len(fields))
+	}
+
+	field0, ok := fields[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected field to be a map")
+	}
+
+	if field0["email"] != "invalid email format" {
+		t.Errorf("expected email error 'invalid email format', got %v", field0["email"])
+	}
+}
+
+func TestMessagePackMiddleware_Marshaller_MultipleFieldErrors(t *testing.T) {
+	outMsg := &velaros.OutboundMessage{
+		Data: []FieldError{
+			{Field: "email", Error: "invalid email format"},
+			{Field: "password", Error: "too short"},
+		},
+	}
+
+	marshaller := func(message *velaros.OutboundMessage) ([]byte, error) {
+		switch v := message.Data.(type) {
+		case []FieldError:
+			message.Data = M{
+				"error":  "Validation error",
+				"fields": genFieldsField(v),
+			}
+		}
+		envelope := map[string]any{}
+		if message.ID != "" {
+			envelope["id"] = message.ID
+		}
+		if message.Data != nil {
+			envelope["data"] = message.Data
+		}
+		return msgpack.Marshal(envelope)
+	}
+
+	resultBytes, err := marshaller(outMsg)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var envelope map[string]any
+	if err := msgpack.Unmarshal(resultBytes, &envelope); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	data, ok := envelope["data"].(map[string]any)
+	if !ok {
+		t.Fatal("expected data to be a map")
+	}
+
+	if data["error"] != "Validation error" {
+		t.Errorf("expected error 'Validation error', got %v", data["error"])
+	}
+
+	fields, ok := data["fields"].([]any)
+	if !ok {
+		t.Fatal("expected fields to be an array")
+	}
+
+	if len(fields) != 2 {
+		t.Fatalf("expected 2 field errors, got %d", len(fields))
+	}
+
+	field0, ok := fields[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected field to be a map")
+	}
+	if field0["email"] != "invalid email format" {
+		t.Errorf("expected email error 'invalid email format', got %v", field0["email"])
+	}
+
+	field1, ok := fields[1].(map[string]any)
+	if !ok {
+		t.Fatal("expected field to be a map")
+	}
+	if field1["password"] != "too short" {
+		t.Errorf("expected password error 'too short', got %v", field1["password"])
+	}
+}
