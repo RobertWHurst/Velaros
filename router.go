@@ -418,20 +418,11 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 
 	socket := NewSocket(req.Header, conn)
 
-	if r.firstOpenHandlerNode != nil {
-		openCtx := NewContextWithNode(socket, inboundMessageFromPool(), r.firstOpenHandlerNode)
-		openCtx.Next()
-		openCtx.free()
-	}
-
+	socket.handleOpen(r.firstOpenHandlerNode)
 	for socket.handleNextMessageWithNode(r.firstHandlerNode) {
+		// continue handling messages
 	}
-
-	if r.firstCloseHandlerNode != nil {
-		closeCtx := NewContextWithNode(socket, inboundMessageFromPool(), r.firstCloseHandlerNode)
-		closeCtx.Next()
-		closeCtx.free()
-	}
+	socket.handleClose(r.firstCloseHandlerNode)
 
 	socket.closeMx.Lock()
 	defer socket.closeMx.Unlock()

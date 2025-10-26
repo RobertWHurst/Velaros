@@ -1129,3 +1129,166 @@ func (h *testHandlerWithOpenAndClose) HandleOpen(ctx *velaros.Context) {
 func (h *testHandlerWithOpenAndClose) HandleClose(ctx *velaros.Context) {
 	h.handleCloseFunc(ctx)
 }
+
+func TestOpenHandlersAutoProgressWithoutNext(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var executionOrder []string
+
+	router.UseOpen(func(ctx *velaros.Context) {
+		executionOrder = append(executionOrder, "handler1")
+		// Not calling ctx.Next() - should still progress to next handler
+	})
+
+	router.UseOpen(func(ctx *velaros.Context) {
+		executionOrder = append(executionOrder, "handler2")
+	})
+
+	router.UseOpen(func(ctx *velaros.Context) {
+		executionOrder = append(executionOrder, "handler3")
+	})
+
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if len(executionOrder) != 3 {
+		t.Errorf("expected 3 handlers to execute, got %d", len(executionOrder))
+	}
+
+	expected := []string{"handler1", "handler2", "handler3"}
+	for i, exp := range expected {
+		if i >= len(executionOrder) || executionOrder[i] != exp {
+			t.Errorf("expected execution order %v, got %v", expected, executionOrder)
+			break
+		}
+	}
+}
+
+func TestCloseHandlersAutoProgressWithoutNext(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var executionOrder []string
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	router.UseClose(func(ctx *velaros.Context) {
+		executionOrder = append(executionOrder, "handler1")
+		// Not calling ctx.Next() - should still progress to next handler
+	})
+
+	router.UseClose(func(ctx *velaros.Context) {
+		executionOrder = append(executionOrder, "handler2")
+	})
+
+	router.UseClose(func(ctx *velaros.Context) {
+		executionOrder = append(executionOrder, "handler3")
+		wg.Done()
+	})
+
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = conn.Close(websocket.StatusNormalClosure, "")
+
+	wg.Wait()
+
+	if len(executionOrder) != 3 {
+		t.Errorf("expected 3 handlers to execute, got %d", len(executionOrder))
+	}
+
+	expected := []string{"handler1", "handler2", "handler3"}
+	for i, exp := range expected {
+		if i >= len(executionOrder) || executionOrder[i] != exp {
+			t.Errorf("expected execution order %v, got %v", expected, executionOrder)
+			break
+		}
+	}
+}
+
+func TestOpenHandlerExplicitNextForPostProcessing(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var executionOrder []string
+
+	router.UseOpen(func(ctx *velaros.Context) {
+		executionOrder = append(executionOrder, "handler1-start")
+
+		ctx.Next() // Explicitly call Next for post-processing
+
+		executionOrder = append(executionOrder, "handler1-end")
+	})
+
+	router.UseOpen(func(ctx *velaros.Context) {
+		executionOrder = append(executionOrder, "handler2")
+	})
+
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	time.Sleep(100 * time.Millisecond)
+
+	expected := []string{"handler1-start", "handler2", "handler1-end"}
+	if len(executionOrder) != len(expected) {
+		t.Errorf("expected %d executions, got %d: %v", len(expected), len(executionOrder), executionOrder)
+	}
+
+	for i, exp := range expected {
+		if i >= len(executionOrder) || executionOrder[i] != exp {
+			t.Errorf("expected execution order %v, got %v", expected, executionOrder)
+			break
+		}
+	}
+}
+
+func TestOpenHandlerStopsOnClosedSocket(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var handler2Called bool
+
+	router.UseOpen(func(ctx *velaros.Context) {
+		ctx.CloseWithStatus(velaros.StatusPolicyViolation, "rejected")
+		// Socket is now closed, next handler should not execute
+	})
+
+	router.UseOpen(func(ctx *velaros.Context) {
+		handler2Called = true
+	})
+
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	time.Sleep(100 * time.Millisecond)
+
+	if handler2Called {
+		t.Error("expected handler2 not to be called after socket was closed")
+	}
+}

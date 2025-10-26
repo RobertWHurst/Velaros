@@ -56,7 +56,7 @@ It also integrates as middleware with Navaros, its sister HTTP framework, throug
 - 🔄 **Bidirectional** - Full duplex communication where both client and server can initiate messages and await responses
 - 🎯 **Powerful Patterns** - Flexible routing with parameters, wildcards, regex constraints, and modifiers
 - 🔌 **Middleware** - Composable middleware for authentication, logging, and more
-- 🔁 **Lifecycle Hooks** - UseOpen and UseClose middleware for connection initialization and cleanup
+- 🔁 **Lifecycle Hooks** - UseOpen and UseClose handlers for connection initialization and cleanup
 - 📦 **Type Detection** - Automatic text/binary message type handling
 - ⏱️ **Timeout Control** - Request timeouts and context cancellation for server→client requests
 - 🧩 **Extensible** - Simple interfaces for custom handlers and middleware
@@ -929,7 +929,7 @@ Velaros provides lifecycle middleware that executes at the beginning and end of 
 
 ### UseOpen
 
-`UseOpen()` registers middleware that executes immediately when a new WebSocket connection is established, before any messages are processed. This is useful for initialization, authentication, or setting up connection-level state.
+`UseOpen()` registers handlers that execute immediately when a new WebSocket connection is established, before any messages are processed. This is useful for initialization, authentication, or setting up connection-level state.
 
 ```go
 router.UseOpen(func(ctx *velaros.Context) {
@@ -946,7 +946,7 @@ router.UseOpen(func(ctx *velaros.Context) {
 
 ### UseClose
 
-`UseClose()` registers middleware that executes when a WebSocket connection is closing, after the message loop exits. This is useful for cleanup, logging, or notifying other systems about disconnections. If closed server-side, UseClose middleware can still send messages to the client before the connection closes.
+`UseClose()` registers handlers that execute when a WebSocket connection is closing. This is useful for cleanup, logging, or notifying other systems about disconnections. If closed server-side, UseClose handlers can still send messages to the client before the connection closes.
 
 ```go
 router.UseClose(func(ctx *velaros.Context) {
@@ -967,7 +967,7 @@ router.UseClose(func(ctx *velaros.Context) {
 
 ### Programmatic Connection Close
 
-Handlers can programmatically close a connection using `ctx.Close()` or `ctx.CloseWithStatus()`. This stops message processing and executes all `UseClose` middleware before the connection is actually closed.
+Handlers can programmatically close a connection using `ctx.Close()` or `ctx.CloseWithStatus()`. This stops message processing and executes all `UseClose` handlers before the connection is actually closed.
 
 ```go
 router.Bind("/logout", func(ctx *velaros.Context) {
@@ -1057,32 +1057,6 @@ router.UseClose(func(ctx *velaros.Context) {
 
 **Note:** Status codes 1005, 1006, and 1015 are reserved and should not be set explicitly by applications. They are used by the WebSocket implementation itself.
 
-### Multiple Lifecycle Handlers
-
-You can register multiple `UseOpen` and `UseClose` middleware. They execute in order like regular middleware - call `ctx.Next()` to continue to the next handler in the chain.
-
-```go
-router.UseOpen(func(ctx *velaros.Context) {
-    log.Println("Middleware 1: Connection opened")
-    ctx.SetOnSocket("initialized", true)
-    ctx.Next() // Continue to next UseOpen middleware
-})
-
-router.UseOpen(func(ctx *velaros.Context) {
-    log.Println("Middleware 2: Initialize session")
-    // No Next() call - this is the last middleware
-})
-
-router.UseClose(func(ctx *velaros.Context) {
-    log.Println("Middleware 1: Cleanup session")
-    ctx.Next() // Continue to next UseClose middleware
-})
-
-router.UseClose(func(ctx *velaros.Context) {
-    log.Println("Middleware 2: Connection closed")
-})
-```
-
 ### Lifecycle Hooks in Middleware Handlers
 
 Handlers implementing the `OpenHandler` or `CloseHandler` interfaces can automatically register lifecycle hooks when used as middleware. This is particularly useful for routers or custom middleware that need to handle connection initialization and cleanup.
@@ -1111,7 +1085,6 @@ func (m *AuthMiddleware) HandleOpen(ctx *velaros.Context) {
     } else {
         ctx.SetOnSocket("authenticated", false)
     }
-    ctx.Next()
 }
 
 func (m *AuthMiddleware) HandleClose(ctx *velaros.Context) {
@@ -1119,14 +1092,13 @@ func (m *AuthMiddleware) HandleClose(ctx *velaros.Context) {
     if user, ok := ctx.GetFromSocket("user"); ok {
         log.Printf("User %v disconnected", user)
     }
-    ctx.Next()
 }
 
 // Use the middleware - lifecycle hooks are automatically registered
 router.Use("/api/**", &AuthMiddleware{tokenValidator: validator})
 ```
 
-When a handler implementing `OpenHandler` or `CloseHandler` is registered via `Use()`, Velaros automatically registers the `HandleOpen` and `HandleClose` methods as lifecycle middleware. This allows complex middleware (like auth handlers) to hook into the connection lifecycle without requiring manual registration via `UseOpen` and `UseClose`.
+When a handler implementing `OpenHandler` or `CloseHandler` is registered via `Use()`, Velaros automatically registers the `HandleOpen` and `HandleClose` methods as lifecycle handlers. This allows complex middleware (like auth handlers) to hook into the connection lifecycle without requiring manual registration via `UseOpen` and `UseClose`.
 
 ## Bidirectional Communication
 
@@ -1349,6 +1321,34 @@ When handlers block (like the broadcasting pattern above), proper cleanup is cri
 - `ctx.Done()` works like the standard library's cancellation pattern
 
 ## Advanced Usage
+
+### Open and Close Handler Execution
+
+Open and close handlers execute automatically in sequence - you don't need to call `ctx.Next()`. When a handler returns, the next handler is invoked automatically. 
+
+**Post-Processing Pattern:**
+
+Explicitly calling `ctx.Next()` allows you to perform work after all subsequent handlers complete:
+
+```go
+router.UseOpen(func(ctx *velaros.Context) {
+    ctx.SetOnSocket("startTime", time.Now())
+    
+    ctx.Next() // Execute all subsequent handlers now
+    
+    // Runs after all downstream handlers complete
+    duration := time.Since(ctx.MustGetFromSocket("startTime").(time.Time))
+    log.Printf("Initialization took %v", duration)
+})
+
+router.UseOpen(func(ctx *velaros.Context) {
+    ctx.SetOnSocket("sessionID", uuid.NewString())
+})
+```
+
+Useful for timing, metrics, logging, or resource management that wraps initialization/cleanup.
+
+**Note:** Handler chains cannot be short-circuited. Open handlers progress to the next handler unless the socket is closed. Close handlers always execute to completion.
 
 ### Authentication
 

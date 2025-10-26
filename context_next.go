@@ -122,6 +122,18 @@ func (c *Context) next() {
 	} else {
 		panic(fmt.Sprintf("Unknown handler type: %s", reflect.TypeOf(c.currentHandler)))
 	}
+
+	// Call next automatically for open and close handlers,
+	// but only if there was no error and the socket is not closed
+	if (bindType == OpenBindType && !c.socket.isClosed()) || bindType == CloseBindType {
+		c.next()
+	}
+
+	// Prevent handlers from calling Next twice
+	c.currentHandlerNode = nil
+	c.currentHandlerNodeMatches = false
+	c.currentHandlerIndex = 0
+	c.currentHandler = nil
 }
 
 func execWithCtxRecovery(ctx *Context, fn func()) {

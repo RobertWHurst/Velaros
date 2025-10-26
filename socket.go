@@ -147,12 +147,23 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 		inboundMsg.Data = msg
 
 		ctx := NewContextWithNodeAndMessageType(s, inboundMsg, node, msgType)
-
 		ctx.Next()
 		ctx.free()
 	}()
 
 	return true
+}
+
+func (s *Socket) handleOpen(node *HandlerNode) {
+	openCtx := NewContextWithNode(s, inboundMessageFromPool(), node)
+	openCtx.Next()
+	openCtx.free()
+}
+
+func (s *Socket) handleClose(node *HandlerNode) {
+	closeCtx := NewContextWithNode(s, inboundMessageFromPool(), node)
+	closeCtx.Next()
+	closeCtx.free()
 }
 
 func (s *Socket) getInterceptor(id string) (chan *InboundMessage, bool) {
