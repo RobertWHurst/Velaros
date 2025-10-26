@@ -10,21 +10,6 @@ import (
 	"github.com/RobertWHurst/navaros"
 )
 
-// BindType indicates the type of handler binding (regular message handler,
-// open lifecycle handler, or close lifecycle handler).
-type BindType int
-
-const (
-	// BindTypeBind indicates a regular message handler bound to a path pattern.
-	BindTypeBind BindType = iota
-
-	// BindTypeBindOpen indicates a lifecycle handler that runs when a connection opens.
-	BindTypeBindOpen
-
-	// BindTypeBindClose indicates a lifecycle handler that runs when a connection closes.
-	BindTypeBindClose
-)
-
 // Router is the main WebSocket router that handles connection upgrades and
 // message routing. It implements http.Handler for easy integration with Go's
 // standard HTTP servers, and can also be used as middleware with Navaros.
@@ -42,6 +27,11 @@ type Router struct {
 	lastCloseHandlerNode  *HandlerNode
 	origins               []string
 }
+
+var _ http.Handler = &Router{}
+var _ Handler = &Router{}
+var _ OpenHandler = &Router{}
+var _ CloseHandler = &Router{}
 
 // NewRouter creates and returns a new WebSocket router.
 func NewRouter() *Router {
@@ -102,6 +92,30 @@ func (r *Router) Handle(ctx *Context) {
 	}
 }
 
+// HandleOpen implements the OpenHandler interface, allowing the router to
+// handle WebSocket connection open events when used as middleware in another
+// router.
+func (r *Router) HandleOpen(ctx *Context) {
+	subCtx := NewSubContextWithNode(ctx, r.firstOpenHandlerNode)
+	subCtx.Next()
+	subCtx.free()
+	if subCtx.currentHandlerNode != nil {
+		ctx.Next()
+	}
+}
+
+// HandleClose implements the CloseHandler interface, allowing the router to
+// handle WebSocket connection close events when used as middleware in another
+// router.
+func (r *Router) HandleClose(ctx *Context) {
+	subCtx := NewSubContextWithNode(ctx, r.firstCloseHandlerNode)
+	subCtx.Next()
+	subCtx.free()
+	if subCtx.currentHandlerNode != nil {
+		ctx.Next()
+	}
+}
+
 // Use registers middleware handlers that execute for all messages. Middleware
 // can optionally be scoped to a specific path pattern by providing a path as
 // the first argument. Handlers are executed in the order they are registered.
@@ -120,6 +134,9 @@ func (r *Router) Handle(ctx *Context) {
 //	router.Use("/api/**", apiRouter)
 //
 // Handlers must be of type Handler, HandlerFunc, or func(*Context).
+//
+// Handlers may also implement OpenHandler or CloseHandler to register
+// connection lifecycle hooks when used as middleware.
 func (r *Router) Use(handlers ...any) {
 	mountPath := "/**"
 	if len(handlers) != 0 {
@@ -133,41 +150,7 @@ func (r *Router) Use(handlers ...any) {
 		}
 	}
 
-	r.bind(BindTypeBind, false, mountPath, handlers...)
-}
-
-// Bind registers handlers for messages matching the specified path pattern.
-// Handlers are executed in order when a message's path matches the pattern.
-// The path pattern supports parameters (:name), wildcards (*), and modifiers.
-//
-// Example patterns:
-//
-//	router.Bind("/users/list", listUsersHandler)
-//	router.Bind("/users/:id", getUserHandler)
-//	router.Bind("/files/**", fileHandler)
-//
-// Handlers must be of type Handler, HandlerFunc, or func(*Context).
-// Panics if no handlers are provided or if handlers are of an invalid type.
-func (r *Router) Bind(path string, handlers ...any) {
-	r.bind(BindTypeBind, false, path, handlers...)
-}
-
-// PublicBind is like Bind but marks the route as part of the public API.
-// This creates a route descriptor that can be discovered by API gateway
-// frameworks for service discovery and routing. Use this for routes that
-// should be exposed externally, and use Bind for internal-only routes.
-//
-// Example:
-//
-//	// Public API route - exposed through gateway
-//	router.PublicBind("/api/users/:id", getUserHandler)
-//
-//	// Internal route - not exposed
-//	router.Bind("/internal/health", healthHandler)
-//
-// Route descriptors can be retrieved via RouteDescriptors() for gateway integration.
-func (r *Router) PublicBind(path string, handlers ...any) {
-	r.bind(BindTypeBind, true, path, handlers...)
+	r.bind(false, mountPath, handlers...)
 }
 
 // UseOpen registers handlers that execute when a new WebSocket connection is
@@ -183,7 +166,35 @@ func (r *Router) PublicBind(path string, handlers ...any) {
 //
 // UseOpen handlers are executed in the order they are registered.
 func (r *Router) UseOpen(handlers ...any) {
-	r.bind(BindTypeBindOpen, false, "", handlers...)
+	if len(handlers) == 0 {
+		panic("no handlers provided")
+	}
+
+	for _, handler := range handlers {
+		if _, ok := handler.(OpenHandler); ok {
+			continue
+		} else if _, ok := handler.(HandlerFunc); ok {
+			continue
+		} else if _, ok := handler.(func(*Context)); ok {
+			continue
+		}
+
+		panic("invalid handler type. Must be OpenHandler, HandlerFunc, or " +
+			"func(*Context). Got: " + reflect.TypeOf(handler).String())
+	}
+
+	nextHandlerNode := &HandlerNode{
+		BindType: OpenBindType,
+		Handlers: handlers,
+	}
+
+	if r.firstOpenHandlerNode == nil {
+		r.firstOpenHandlerNode = nextHandlerNode
+		r.lastOpenHandlerNode = nextHandlerNode
+	} else {
+		r.lastOpenHandlerNode.Next = nextHandlerNode
+		r.lastOpenHandlerNode = nextHandlerNode
+	}
 }
 
 // UseClose registers handlers that execute when a WebSocket connection is closing,
@@ -201,7 +212,69 @@ func (r *Router) UseOpen(handlers ...any) {
 // UseClose handlers are executed in the order they are registered, for both
 // server-initiated and client-initiated closures.
 func (r *Router) UseClose(handlers ...any) {
-	r.bind(BindTypeBindClose, false, "", handlers...)
+	if len(handlers) == 0 {
+		panic("no handlers provided")
+	}
+
+	for _, handler := range handlers {
+		if _, ok := handler.(CloseHandler); ok {
+			continue
+		} else if _, ok := handler.(HandlerFunc); ok {
+			continue
+		} else if _, ok := handler.(func(*Context)); ok {
+			continue
+		}
+
+		panic("invalid handler type. Must be CloseHandler, HandlerFunc, or " +
+			"func(*Context). Got: " + reflect.TypeOf(handler).String())
+	}
+
+	nextHandlerNode := &HandlerNode{
+		BindType: CloseBindType,
+		Handlers: handlers,
+	}
+
+	if r.firstCloseHandlerNode == nil {
+		r.firstCloseHandlerNode = nextHandlerNode
+		r.lastCloseHandlerNode = nextHandlerNode
+	} else {
+		r.lastCloseHandlerNode.Next = nextHandlerNode
+		r.lastCloseHandlerNode = nextHandlerNode
+	}
+}
+
+// Bind registers handlers for messages matching the specified path pattern.
+// Handlers are executed in order when a message's path matches the pattern.
+// The path pattern supports parameters (:name), wildcards (*), and modifiers.
+//
+// Example patterns:
+//
+//	router.Bind("/users/list", listUsersHandler)
+//	router.Bind("/users/:id", getUserHandler)
+//	router.Bind("/files/**", fileHandler)
+//
+// Handlers must be of type Handler, HandlerFunc, or func(*Context).
+// Panics if no handlers are provided or if handlers are of an invalid type.
+func (r *Router) Bind(path string, handlers ...any) {
+	r.bind(false, path, handlers...)
+}
+
+// PublicBind is like Bind but marks the route as part of the public API.
+// This creates a route descriptor that can be discovered by API gateway
+// frameworks for service discovery and routing. Use this for routes that
+// should be exposed externally, and use Bind for internal-only routes.
+//
+// Example:
+//
+//	// Public API route - exposed through gateway
+//	router.PublicBind("/api/users/:id", getUserHandler)
+//
+//	// Internal route - not exposed
+//	router.Bind("/internal/health", healthHandler)
+//
+// Route descriptors can be retrieved via RouteDescriptors() for gateway integration.
+func (r *Router) PublicBind(path string, handlers ...any) {
+	r.bind(true, path, handlers...)
 }
 
 // RouteDescriptors returns a list of all public route descriptors collected by
@@ -237,7 +310,7 @@ func (r *Router) Lookup(handlerOrTransformer any) (*Pattern, bool) {
 	return nil, false
 }
 
-func (r *Router) bind(bindType BindType, isPublic bool, path string, handlers ...any) {
+func (r *Router) bind(isPublic bool, path string, handlers ...any) {
 	if len(handlers) == 0 {
 		panic("no handlers provided")
 	}
@@ -255,63 +328,56 @@ func (r *Router) bind(bindType BindType, isPublic bool, path string, handlers ..
 			"func(*Context). Got: " + reflect.TypeOf(handler).String())
 	}
 
-	var pattern *Pattern
-	if bindType == BindTypeBind {
-		var err error
-		pattern, err = NewPattern(path)
-		if err != nil {
-			panic("invalid route pattern \"" + path + "\": " + err.Error())
+	pattern, err := NewPattern(path)
+	if err != nil {
+		panic("invalid route pattern \"" + path + "\": " + err.Error())
+	}
+
+	if isPublic {
+		r.addRouteDescriptor(pattern)
+	}
+
+	for _, handler := range handlers {
+
+		// if this handler also implements open/close, bind those too
+		if handlerWithOpen, ok := handler.(OpenHandler); ok {
+			r.UseOpen(handlerWithOpen)
+		}
+		if handlerWithClose, ok := handler.(CloseHandler); ok {
+			r.UseClose(handlerWithClose)
 		}
 
-		hasAddedOwnRouteDescriptor := false
-		for _, handler := range handlers {
-			if routerHandler, ok := handler.(RouterHandler); ok {
-				for _, routeDescriptor := range routerHandler.RouteDescriptors() {
-					mountPath := strings.TrimSuffix(path, "/**")
-					subPattern, err := NewPattern(mountPath + routeDescriptor.Pattern.String())
-					if err != nil {
-						panic("invalid route pattern \"" + mountPath + routeDescriptor.Pattern.String() + "\": " + err.Error())
-					}
-					r.addRouteDescriptor(subPattern)
+		// If the handler is a Router, add its route descriptors as sub-routes
+		if routerHandler, ok := handler.(RouterHandler); ok {
+
+			// routers should not be bound with PublicBind
+			if isPublic {
+				panic("cannot use PublicBind with a RouterHandler. Use the Use method instead.")
+			}
+
+			for _, routeDescriptor := range routerHandler.RouteDescriptors() {
+				mountPath := strings.TrimSuffix(path, "/**")
+				subPattern, err := NewPattern(mountPath + routeDescriptor.Pattern.String())
+				if err != nil {
+					panic("invalid route pattern \"" + mountPath + routeDescriptor.Pattern.String() + "\": " + err.Error())
 				}
-			} else if isPublic && !hasAddedOwnRouteDescriptor {
-				r.addRouteDescriptor(pattern)
-				hasAddedOwnRouteDescriptor = true
+				r.addRouteDescriptor(subPattern)
 			}
 		}
 	}
 
 	nextHandlerNode := &HandlerNode{
-		BindType: bindType,
+		BindType: NormalBindType,
 		Pattern:  pattern,
 		Handlers: handlers,
 	}
 
-	switch bindType {
-	case BindTypeBind:
-		if r.firstHandlerNode == nil {
-			r.firstHandlerNode = nextHandlerNode
-			r.lastHandlerNode = nextHandlerNode
-		} else {
-			r.lastHandlerNode.Next = nextHandlerNode
-			r.lastHandlerNode = nextHandlerNode
-		}
-	case BindTypeBindOpen:
-		if r.firstOpenHandlerNode == nil {
-			r.firstOpenHandlerNode = nextHandlerNode
-			r.lastOpenHandlerNode = nextHandlerNode
-		} else {
-			r.lastOpenHandlerNode.Next = nextHandlerNode
-			r.lastOpenHandlerNode = nextHandlerNode
-		}
-	case BindTypeBindClose:
-		if r.firstCloseHandlerNode == nil {
-			r.firstCloseHandlerNode = nextHandlerNode
-			r.lastCloseHandlerNode = nextHandlerNode
-		} else {
-			r.lastCloseHandlerNode.Next = nextHandlerNode
-			r.lastCloseHandlerNode = nextHandlerNode
-		}
+	if r.firstHandlerNode == nil {
+		r.firstHandlerNode = nextHandlerNode
+		r.lastHandlerNode = nextHandlerNode
+	} else {
+		r.lastHandlerNode.Next = nextHandlerNode
+		r.lastHandlerNode = nextHandlerNode
 	}
 }
 

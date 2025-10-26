@@ -1083,6 +1083,51 @@ router.UseClose(func(ctx *velaros.Context) {
 })
 ```
 
+### Lifecycle Hooks in Middleware Handlers
+
+Handlers implementing the `OpenHandler` or `CloseHandler` interfaces can automatically register lifecycle hooks when used as middleware. This is particularly useful for routers or custom middleware that need to handle connection initialization and cleanup.
+
+```go
+// Custom middleware handler with lifecycle hooks
+type AuthMiddleware struct {
+    tokenValidator TokenValidator
+}
+
+func (m *AuthMiddleware) Handle(ctx *velaros.Context) {
+    // Regular message handling - check if authenticated
+    if !ctx.GetFromSocket("authenticated").(bool) {
+        ctx.Send(ErrorResponse{Error: "unauthorized"})
+        return
+    }
+    ctx.Next()
+}
+
+func (m *AuthMiddleware) HandleOpen(ctx *velaros.Context) {
+    // Authenticate during connection open
+    token := ctx.Headers().Get("Authorization")
+    if user, err := m.tokenValidator.Validate(token); err == nil {
+        ctx.SetOnSocket("user", user)
+        ctx.SetOnSocket("authenticated", true)
+    } else {
+        ctx.SetOnSocket("authenticated", false)
+    }
+    ctx.Next()
+}
+
+func (m *AuthMiddleware) HandleClose(ctx *velaros.Context) {
+    // Cleanup on connection close
+    if user, ok := ctx.GetFromSocket("user"); ok {
+        log.Printf("User %v disconnected", user)
+    }
+    ctx.Next()
+}
+
+// Use the middleware - lifecycle hooks are automatically registered
+router.Use("/api/**", &AuthMiddleware{tokenValidator: validator})
+```
+
+When a handler implementing `OpenHandler` or `CloseHandler` is registered via `Use()`, Velaros automatically registers the `HandleOpen` and `HandleClose` methods as lifecycle middleware. This allows complex middleware (like auth handlers) to hook into the connection lifecycle without requiring manual registration via `UseOpen` and `UseClose`.
+
 ## Bidirectional Communication
 
 Unlike HTTP, WebSocket connections are bidirectional - the server can send messages to clients at any time, not just in response to requests. Velaros provides several communication patterns to leverage this capability.

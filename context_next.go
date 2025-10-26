@@ -19,7 +19,7 @@ func (c *Context) next() {
 
 	// For BindClose handlers, we don't want to check if the socket is closed
 	// since they're meant to run during the close process
-	isCloseHandler := c.currentHandlerNode != nil && c.currentHandlerNode.BindType == BindTypeBindClose
+	isCloseHandler := c.currentHandlerNode != nil && c.currentHandlerNode.BindType == CloseBindType
 	if c.Error != nil || (!isCloseHandler && c.socket.isClosed()) {
 		return
 	}
@@ -38,9 +38,9 @@ func (c *Context) next() {
 	// if the path was set, and have a matching node, make sure it still matches
 	// the path, otherwise clear it and move on to the next node.
 	if c.message.hasSetPath {
-		if c.matchingHandlerNode != nil && !c.matchingHandlerNode.tryMatch(c) {
+		if c.currentHandlerNodeMatches && !c.currentHandlerNode.tryMatch(c) {
 			c.currentHandlerNode = c.currentHandlerNode.Next
-			c.matchingHandlerNode = nil
+			c.currentHandlerNodeMatches = false
 			c.currentHandlerIndex = 0
 			c.currentHandler = nil
 		}
@@ -58,15 +58,15 @@ func (c *Context) next() {
 		//
 		// If we do not have a matching handler node, we will walk the chain
 		// until we find a matching handler node.
-		if c.matchingHandlerNode == nil {
+		if !c.currentHandlerNodeMatches {
 			for c.currentHandlerNode != nil {
 				if c.currentHandlerNode.tryMatch(c) {
-					c.matchingHandlerNode = c.currentHandlerNode
+					c.currentHandlerNodeMatches = true
 					break
 				}
 				c.currentHandlerNode = c.currentHandlerNode.Next
 			}
-			if c.matchingHandlerNode == nil {
+			if !c.currentHandlerNodeMatches {
 				break
 			}
 		}
@@ -75,8 +75,8 @@ func (c *Context) next() {
 		// If there are more than one, we will continue from the same handler node
 		// the next time Next is called. We iterate through the handler functions
 		// until we have executed all of them.
-		if c.currentHandlerIndex < len(c.matchingHandlerNode.Handlers) {
-			c.currentHandler = c.matchingHandlerNode.Handlers[c.currentHandlerIndex]
+		if c.currentHandlerIndex < len(c.currentHandlerNode.Handlers) {
+			c.currentHandler = c.currentHandlerNode.Handlers[c.currentHandlerIndex]
 			c.currentHandlerIndex += 1
 			break
 		}
@@ -85,7 +85,7 @@ func (c *Context) next() {
 		// executed all of its handlers. We can now clear the
 		// matching handler node, and continue to the next handler node.
 		c.currentHandlerNode = c.currentHandlerNode.Next
-		c.matchingHandlerNode = nil
+		c.currentHandlerNodeMatches = false
 		c.currentHandlerIndex = 0
 		c.currentHandler = nil
 	}
@@ -98,7 +98,16 @@ func (c *Context) next() {
 
 	// Execute the handler function. Throw an error if it's not
 	// an expected type.
-	if currentHandler, ok := c.currentHandler.(Handler); ok {
+	bindType := c.currentHandlerNode.BindType
+	if currentHandler, ok := c.currentHandler.(OpenHandler); ok && bindType == OpenBindType {
+		execWithCtxRecovery(c, func() {
+			currentHandler.HandleOpen(c)
+		})
+	} else if currentHandler, ok := c.currentHandler.(CloseHandler); ok && bindType == CloseBindType {
+		execWithCtxRecovery(c, func() {
+			currentHandler.HandleClose(c)
+		})
+	} else if currentHandler, ok := c.currentHandler.(Handler); ok && bindType == NormalBindType {
 		execWithCtxRecovery(c, func() {
 			currentHandler.Handle(c)
 		})

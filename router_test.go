@@ -921,3 +921,211 @@ func TestRouterLookupMount(t *testing.T) {
 		t.Errorf("expected mount pattern '/mount/**', got %q", foundMount.String())
 	}
 }
+
+func TestHandlerWithOpen(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	openCalled := false
+	var openSocketID string
+
+	handler := &testHandlerWithOpen{
+		handleFunc: func(ctx *velaros.Context) {
+			ctx.Next()
+		},
+		handleOpenFunc: func(ctx *velaros.Context) {
+			openCalled = true
+			openSocketID = ctx.SocketID()
+			ctx.SetOnSocket("initialized", true)
+			ctx.Next()
+		},
+	}
+
+	router.Use(handler)
+
+	router.Bind("/test", func(ctx *velaros.Context) {
+		if initialized, ok := ctx.GetFromSocket("initialized"); !ok || initialized != true {
+			t.Error("expected initialized to be set by HandleOpen")
+		}
+		if err := ctx.Send(testMessage{Msg: "ok"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	writeMessage(t, conn, ctx, "", "/test", testMessage{Msg: "hello"})
+	readMessage(t, conn, ctx)
+
+	if !openCalled {
+		t.Error("expected HandleOpen to be called")
+	}
+
+	if openSocketID == "" {
+		t.Error("expected socket ID to be captured in HandleOpen")
+	}
+}
+
+type testHandlerWithOpen struct {
+	handleFunc     func(*velaros.Context)
+	handleOpenFunc func(*velaros.Context)
+}
+
+func (h *testHandlerWithOpen) Handle(ctx *velaros.Context) {
+	h.handleFunc(ctx)
+}
+
+func (h *testHandlerWithOpen) HandleOpen(ctx *velaros.Context) {
+	h.handleOpenFunc(ctx)
+}
+
+func TestHandlerWithClose(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	closeCalled := false
+	var closeSocketID string
+
+	handler := &testHandlerWithClose{
+		handleFunc: func(ctx *velaros.Context) {
+			ctx.Next()
+		},
+		handleCloseFunc: func(ctx *velaros.Context) {
+			closeCalled = true
+			closeSocketID = ctx.SocketID()
+			ctx.Next()
+		},
+	}
+
+	router.Use(handler)
+
+	router.UseClose(func(ctx *velaros.Context) {
+		wg.Done()
+	})
+
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = conn.Close(websocket.StatusNormalClosure, "")
+
+	wg.Wait()
+
+	if !closeCalled {
+		t.Error("expected HandleClose to be called")
+	}
+
+	if closeSocketID == "" {
+		t.Error("expected socket ID to be captured in HandleClose")
+	}
+}
+
+type testHandlerWithClose struct {
+	handleFunc      func(*velaros.Context)
+	handleCloseFunc func(*velaros.Context)
+}
+
+func (h *testHandlerWithClose) Handle(ctx *velaros.Context) {
+	h.handleFunc(ctx)
+}
+
+func (h *testHandlerWithClose) HandleClose(ctx *velaros.Context) {
+	h.handleCloseFunc(ctx)
+}
+
+func TestHandlerWithOpenAndClose(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	server := httptest.NewServer(router)
+	defer server.Close()
+
+	var wg sync.WaitGroup
+	wg.Add(1)
+
+	openCalled := false
+	closeCalled := false
+	var openSocketID, closeSocketID string
+
+	handler := &testHandlerWithOpenAndClose{
+		handleFunc: func(ctx *velaros.Context) {
+			ctx.Next()
+		},
+		handleOpenFunc: func(ctx *velaros.Context) {
+			openCalled = true
+			openSocketID = ctx.SocketID()
+			ctx.SetOnSocket("custom", "value")
+			ctx.Next()
+		},
+		handleCloseFunc: func(ctx *velaros.Context) {
+			closeCalled = true
+			closeSocketID = ctx.SocketID()
+
+			if value, ok := ctx.GetFromSocket("custom"); !ok || value != "value" {
+				t.Error("expected custom value to be available in HandleClose")
+			}
+			ctx.Next()
+		},
+	}
+
+	router.Use(handler)
+
+	router.UseClose(func(ctx *velaros.Context) {
+		wg.Done()
+	})
+
+	ctx := context.Background()
+	conn, _, err := websocket.Dial(ctx, server.URL, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_ = conn.Close(websocket.StatusNormalClosure, "")
+
+	wg.Wait()
+
+	if !openCalled {
+		t.Error("expected HandleOpen to be called")
+	}
+
+	if !closeCalled {
+		t.Error("expected HandleClose to be called")
+	}
+
+	if openSocketID == "" {
+		t.Error("expected open socket ID to be captured")
+	}
+
+	if closeSocketID == "" {
+		t.Error("expected close socket ID to be captured")
+	}
+
+	if openSocketID != closeSocketID {
+		t.Errorf("expected same socket ID in open and close, got %s and %s", openSocketID, closeSocketID)
+	}
+}
+
+type testHandlerWithOpenAndClose struct {
+	handleFunc      func(*velaros.Context)
+	handleOpenFunc  func(*velaros.Context)
+	handleCloseFunc func(*velaros.Context)
+}
+
+func (h *testHandlerWithOpenAndClose) Handle(ctx *velaros.Context) {
+	h.handleFunc(ctx)
+}
+
+func (h *testHandlerWithOpenAndClose) HandleOpen(ctx *velaros.Context) {
+	h.handleOpenFunc(ctx)
+}
+
+func (h *testHandlerWithOpenAndClose) HandleClose(ctx *velaros.Context) {
+	h.handleCloseFunc(ctx)
+}

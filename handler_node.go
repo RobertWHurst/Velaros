@@ -1,5 +1,20 @@
 package velaros
 
+// BindType indicates the type of handler binding (regular message handler,
+// open lifecycle handler, or close lifecycle handler).
+type BindType int
+
+const (
+	// NormalBindType indicates a regular message handler bound to a path pattern.
+	NormalBindType BindType = iota
+
+	// OpenBindType indicates a lifecycle handler that runs when a connection opens.
+	OpenBindType
+
+	// CloseBindType indicates a lifecycle handler that runs when a connection closes.
+	CloseBindType
+)
+
 // HandlerNode represents a node in the internal handler chain. This is an
 // internal implementation detail used by the router to organize handlers into
 // a linked list for efficient traversal during message processing.

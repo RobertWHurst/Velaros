@@ -6,6 +6,20 @@ type Handler interface {
 	Handle(ctx *Context)
 }
 
+// OpenHandler extends Handler to support connection open lifecycle hooks.
+// When used as middleware (via Use), handlers implementing this interface will
+// automatically have their HandleOpen method registered as UseOpen middleware.
+type OpenHandler interface {
+	HandleOpen(ctx *Context)
+}
+
+// CloseHandler extends Handler to support connection close lifecycle hooks.
+// When used as middleware (via Use), handlers implementing this interface will
+// automatically have their HandleClose method registered as UseClose middleware.
+type CloseHandler interface {
+	HandleClose(ctx *Context)
+}
+
 // HandlerFunc is a function that can be used as a handler with Velaros.
 type HandlerFunc func(ctx *Context)
 

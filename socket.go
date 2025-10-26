@@ -12,6 +12,11 @@ import (
 	"github.com/google/uuid"
 )
 
+type SocketConnection interface {
+	Read(ctx context.Context) (websocket.MessageType, []byte, error)
+	Write(ctx context.Context, messageType websocket.MessageType, data []byte) error
+}
+
 // Socket represents a WebSocket connection and manages its lifecycle, message
 // interception, and connection-level storage. It implements the context.Context
 // interface to support cancellation and deadlines.
@@ -28,7 +33,7 @@ import (
 type Socket struct {
 	id                 string
 	requestHeaders     http.Header
-	connection         *websocket.Conn
+	connection         SocketConnection
 	interceptorsMx     sync.Mutex
 	interceptors       map[string]chan *InboundMessage
 	associatedValuesMx sync.Mutex
@@ -47,7 +52,7 @@ var _ context.Context = &Socket{}
 // NewSocket creates a new Socket wrapping a WebSocket connection. This is
 // primarily for internal use by the router. The socket ID is automatically
 // generated and the done channel is initialized.
-func NewSocket(requestHeaders http.Header, conn *websocket.Conn) *Socket {
+func NewSocket(requestHeaders http.Header, conn SocketConnection) *Socket {
 	s := &Socket{
 		id:               uuid.NewString(),
 		requestHeaders:   requestHeaders,

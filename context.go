@@ -48,10 +48,10 @@ type Context struct {
 	messageUnmarshaler func(message *InboundMessage, into any) error
 	messageMarshaller  func(message *OutboundMessage) ([]byte, error)
 
-	currentHandlerNode  *HandlerNode
-	matchingHandlerNode *HandlerNode
-	associatedValues    map[string]any
-	currentHandlerIndex int
+	currentHandlerNode        *HandlerNode
+	currentHandlerNodeMatches bool
+	associatedValues          map[string]any
+	currentHandlerIndex       int
 
 	currentHandler any
 
@@ -171,7 +171,7 @@ func (c *Context) free() {
 	c.messageMarshaller = nil
 
 	c.currentHandlerNode = nil
-	c.matchingHandlerNode = nil
+	c.currentHandlerNodeMatches = false
 	c.currentHandlerIndex = 0
 	c.currentHandler = nil
 
