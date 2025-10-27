@@ -12,9 +12,17 @@ import (
 	"github.com/google/uuid"
 )
 
+type MessageType = websocket.MessageType
+
+const (
+	MessageText   MessageType = websocket.MessageText
+	MessageBinary MessageType = websocket.MessageBinary
+)
+
 type SocketConnection interface {
-	Read(ctx context.Context) (websocket.MessageType, []byte, error)
-	Write(ctx context.Context, messageType websocket.MessageType, data []byte) error
+	Read(ctx context.Context) (MessageType, []byte, error)
+	Write(ctx context.Context, messageType MessageType, data []byte) error
+	Close(status Status, reason string) error
 }
 
 // Socket represents a WebSocket connection and manages its lifecycle, message
@@ -64,23 +72,15 @@ func NewSocket(requestHeaders http.Header, conn SocketConnection) *Socket {
 	return s
 }
 
-func (s *Socket) Deadline() (time.Time, bool) {
-	return s.ctx.Deadline()
+func (s *Socket) ID() string {
+	return s.id
 }
 
-func (s *Socket) Done() <-chan struct{} {
-	return s.ctx.Done()
+func (s *Socket) Headers() http.Header {
+	return s.requestHeaders
 }
 
-func (s *Socket) Err() error {
-	return s.ctx.Err()
-}
-
-func (s *Socket) Value(key any) any {
-	return s.ctx.Value(key)
-}
-
-func (s *Socket) close(status Status, reason string, source CloseSource) {
+func (s *Socket) Close(status Status, reason string, source CloseSource) {
 	s.closeMx.Lock()
 	defer s.closeMx.Unlock()
 	if s.closed {
@@ -95,30 +95,30 @@ func (s *Socket) close(status Status, reason string, source CloseSource) {
 	s.cancelCtx()
 }
 
-func (s *Socket) isClosed() bool {
+func (s *Socket) IsClosed() bool {
 	s.closeMx.Lock()
 	defer s.closeMx.Unlock()
 	return s.closed
 }
 
-func (s *Socket) send(messageType websocket.MessageType, data []byte) error {
+func (s *Socket) Send(messageType MessageType, data []byte) error {
 	return s.connection.Write(context.Background(), messageType, data)
 }
 
-func (s *Socket) set(key string, value any) {
+func (s *Socket) Set(key string, value any) {
 	s.associatedValuesMx.Lock()
 	s.associatedValues[key] = value
 	s.associatedValuesMx.Unlock()
 }
 
-func (s *Socket) get(key string) (any, bool) {
+func (s *Socket) Get(key string) (any, bool) {
 	s.associatedValuesMx.Lock()
 	v, ok := s.associatedValues[key]
 	s.associatedValuesMx.Unlock()
 	return v, ok
 }
 
-func (s *Socket) mustGet(key string) any {
+func (s *Socket) MustGet(key string) any {
 	s.associatedValuesMx.Lock()
 	v, ok := s.associatedValues[key]
 	s.associatedValuesMx.Unlock()
@@ -128,12 +128,12 @@ func (s *Socket) mustGet(key string) any {
 	return v
 }
 
-func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
+func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 	msgType, msg, err := s.connection.Read(s)
 	if err != nil {
 		closeStatus := websocket.CloseStatus(err)
 		if closeStatus != -1 {
-			s.close(Status(closeStatus), "", ClientCloseSource)
+			s.Close(Status(closeStatus), "", ClientCloseSource)
 			return false
 		}
 		if errors.Is(err, context.Canceled) {
@@ -154,19 +154,19 @@ func (s *Socket) handleNextMessageWithNode(node *HandlerNode) bool {
 	return true
 }
 
-func (s *Socket) handleOpen(node *HandlerNode) {
+func (s *Socket) HandleOpen(node *HandlerNode) {
 	openCtx := NewContextWithNode(s, inboundMessageFromPool(), node)
 	openCtx.Next()
 	openCtx.free()
 }
 
-func (s *Socket) handleClose(node *HandlerNode) {
+func (s *Socket) HandleClose(node *HandlerNode) {
 	closeCtx := NewContextWithNode(s, inboundMessageFromPool(), node)
 	closeCtx.Next()
 	closeCtx.free()
 }
 
-func (s *Socket) getInterceptor(id string) (chan *InboundMessage, bool) {
+func (s *Socket) GetInterceptor(id string) (chan *InboundMessage, bool) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
 
@@ -174,16 +174,32 @@ func (s *Socket) getInterceptor(id string) (chan *InboundMessage, bool) {
 	return interceptorChan, ok
 }
 
-func (s *Socket) addInterceptor(id string, interceptorChan chan *InboundMessage) {
+func (s *Socket) AddInterceptor(id string, interceptorChan chan *InboundMessage) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
 
 	s.interceptors[id] = interceptorChan
 }
 
-func (s *Socket) removeInterceptor(id string) {
+func (s *Socket) RemoveInterceptor(id string) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
 
 	delete(s.interceptors, id)
+}
+
+func (s *Socket) Deadline() (time.Time, bool) {
+	return s.ctx.Deadline()
+}
+
+func (s *Socket) Done() <-chan struct{} {
+	return s.ctx.Done()
+}
+
+func (s *Socket) Err() error {
+	return s.ctx.Err()
+}
+
+func (s *Socket) Value(key any) any {
+	return s.ctx.Value(key)
 }

@@ -220,7 +220,7 @@ func (c *Context) SetOnSocket(key string, value any) {
 	if c.socket == nil {
 		return
 	}
-	c.socket.set(key, value)
+	c.socket.Set(key, value)
 }
 
 // GetFromSocket retrieves a value stored at the socket/connection level.
@@ -231,7 +231,7 @@ func (c *Context) GetFromSocket(key string) (any, bool) {
 	if c.socket == nil {
 		return nil, false
 	}
-	return c.socket.get(key)
+	return c.socket.Get(key)
 }
 
 // MustGetFromSocket retrieves a value stored at the socket/connection level.
@@ -240,7 +240,7 @@ func (c *Context) MustGetFromSocket(key string) any {
 	if c.socket == nil {
 		panic(ErrContextFreed)
 	}
-	return c.socket.mustGet(key)
+	return c.socket.MustGet(key)
 }
 
 // Set stores a value at the message level. Values stored here only exist for
@@ -300,6 +300,11 @@ func (c *Context) Data() []byte {
 // and pattern matching. Middleware can modify the path via SetMessagePath().
 func (c *Context) Path() string {
 	return c.message.Path
+}
+
+// MessageType returns the WebSocket message type of the current message.
+func (c *Context) MessageType() MessageType {
+	return MessageType(c.messageType)
 }
 
 // Headers returns the HTTP headers from the initial WebSocket upgrade request.
@@ -405,7 +410,7 @@ func (c *Context) Send(data any) error {
 	if err != nil {
 		return err
 	}
-	return c.socket.send(c.messageType, msgBuf)
+	return c.socket.Send(c.messageType, msgBuf)
 }
 
 // Reply sends a message to the client in response to the current message.
@@ -433,7 +438,7 @@ func (c *Context) Reply(data any) error {
 	if err != nil {
 		return err
 	}
-	return c.socket.send(c.messageType, msgBuf)
+	return c.socket.Send(c.messageType, msgBuf)
 }
 
 // Request sends a message to the client and waits for a response. This enables
@@ -475,8 +480,8 @@ func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error)
 
 	responseMessageChan := make(chan *InboundMessage, 1)
 	defer close(responseMessageChan)
-	c.socket.addInterceptor(id, responseMessageChan)
-	defer c.socket.removeInterceptor(id)
+	c.socket.AddInterceptor(id, responseMessageChan)
+	defer c.socket.RemoveInterceptor(id)
 
 	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
 		ID:   id,
@@ -486,7 +491,7 @@ func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error)
 		return nil, err
 	}
 
-	if err := c.socket.send(c.messageType, msgBuf); err != nil {
+	if err := c.socket.Send(c.messageType, msgBuf); err != nil {
 		return nil, err
 	}
 
@@ -541,8 +546,8 @@ func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any
 
 	responseMessageChan := make(chan *InboundMessage, 1)
 	defer close(responseMessageChan)
-	c.socket.addInterceptor(id, responseMessageChan)
-	defer c.socket.removeInterceptor(id)
+	c.socket.AddInterceptor(id, responseMessageChan)
+	defer c.socket.RemoveInterceptor(id)
 
 	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
 		ID:   id,
@@ -552,7 +557,7 @@ func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any
 		return err
 	}
 
-	if err := c.socket.send(c.messageType, msgBuf); err != nil {
+	if err := c.socket.Send(c.messageType, msgBuf); err != nil {
 		return err
 	}
 
@@ -574,7 +579,7 @@ func (c *Context) Close() {
 	if c.socket == nil {
 		return
 	}
-	c.socket.close(StatusNormalClosure, "", ServerCloseSource)
+	c.socket.Close(StatusNormalClosure, "", ServerCloseSource)
 }
 
 // CloseWithStatus closes the WebSocket connection with a specific status code
@@ -594,7 +599,7 @@ func (c *Context) CloseWithStatus(status Status, reason string) {
 	if c.socket == nil {
 		return
 	}
-	c.socket.close(status, reason, ServerCloseSource)
+	c.socket.Close(status, reason, ServerCloseSource)
 }
 
 // CloseStatus returns the close status code, reason, and source (client or server)

@@ -80,6 +80,24 @@ func (r *Router) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	}
 }
 
+// HandleSocket allows creating sockets with custom connections, then driving
+// the router with the socket. This is designed for frameworks that use velaros
+// and shouldn't be used in most cases.
+func (r *Router) HandleConnection(headers http.Header, connection SocketConnection) {
+	socket := NewSocket(headers, connection)
+
+	socket.HandleOpen(r.firstOpenHandlerNode)
+	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
+		// continue handling messages
+	}
+	socket.HandleClose(r.firstCloseHandlerNode)
+
+	socket.closeMx.Lock()
+	defer socket.closeMx.Unlock()
+
+	_ = connection.Close(socket.closeStatus, socket.closeReason)
+}
+
 // Handle implements the Handler interface, allowing the router to be used as
 // a handler in another router's middleware chain. This enables mounting one
 // router inside another for modular routing organization.
@@ -418,11 +436,11 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 
 	socket := NewSocket(req.Header, conn)
 
-	socket.handleOpen(r.firstOpenHandlerNode)
-	for socket.handleNextMessageWithNode(r.firstHandlerNode) {
+	socket.HandleOpen(r.firstOpenHandlerNode)
+	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
 		// continue handling messages
 	}
-	socket.handleClose(r.firstCloseHandlerNode)
+	socket.HandleClose(r.firstCloseHandlerNode)
 
 	socket.closeMx.Lock()
 	defer socket.closeMx.Unlock()

@@ -20,14 +20,14 @@ func (c *Context) next() {
 	// For BindClose handlers, we don't want to check if the socket is closed
 	// since they're meant to run during the close process
 	isCloseHandler := c.currentHandlerNode != nil && c.currentHandlerNode.BindType == CloseBindType
-	if c.Error != nil || (!isCloseHandler && c.socket.isClosed()) {
+	if c.Error != nil || (!isCloseHandler && c.socket.IsClosed()) {
 		return
 	}
 
 	// if the ID was set, try socket interceptors to see if they want this
 	// message
 	if c.message.hasSetID {
-		interceptorChan, ok := c.socket.getInterceptor(c.message.ID)
+		interceptorChan, ok := c.socket.GetInterceptor(c.message.ID)
 		if ok {
 			interceptorChan <- c.message
 			return
@@ -125,7 +125,7 @@ func (c *Context) next() {
 
 	// Call next automatically for open and close handlers,
 	// but only if there was no error and the socket is not closed
-	if (bindType == OpenBindType && !c.socket.isClosed()) || bindType == CloseBindType {
+	if (bindType == OpenBindType && !c.socket.IsClosed()) || bindType == CloseBindType {
 		c.next()
 	}
 
