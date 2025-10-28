@@ -128,6 +128,12 @@ func (s *Socket) MustGet(key string) any {
 	return v
 }
 
+func (s *Socket) Delete(key string) {
+	s.associatedValuesMx.Lock()
+	delete(s.associatedValues, key)
+	s.associatedValuesMx.Unlock()
+}
+
 func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 	msgType, msg, err := s.connection.Read(s)
 	if err != nil {

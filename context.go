@@ -243,6 +243,13 @@ func (c *Context) MustGetFromSocket(key string) any {
 	return c.socket.MustGet(key)
 }
 
+func (c *Context) DeleteFromSocket(key string) {
+	if c.socket == nil {
+		return
+	}
+	c.socket.Delete(key)
+}
+
 // Set stores a value at the message level. Values stored here only exist for
 // the duration of processing this specific message. This is useful for passing
 // data between middleware and handlers in the same message's handler chain.
