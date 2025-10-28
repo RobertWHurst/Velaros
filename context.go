@@ -273,6 +273,11 @@ func (c *Context) MustGet(key string) any {
 	return v
 }
 
+// Delete removes a value attached to the context with Set.
+func (c *Context) Delete(key string) {
+	delete(c.associatedValues, key)
+}
+
 // SocketID returns the unique identifier for this WebSocket connection.
 // The ID is generated when the connection is established and remains constant
 // for the connection's lifetime.
