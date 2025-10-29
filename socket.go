@@ -46,7 +46,6 @@ type Socket struct {
 	interceptors       map[string]chan *InboundMessage
 	associatedValuesMx sync.Mutex
 	associatedValues   map[string]any
-	sendMu             sync.Mutex
 	closeMu            sync.Mutex
 	closed             bool
 	closeStatus        Status
@@ -113,8 +112,6 @@ func (s *Socket) IsClosed() bool {
 }
 
 func (s *Socket) Send(messageType MessageType, data []byte) error {
-	s.sendMu.Lock()
-	defer s.sendMu.Unlock()
 	return s.connection.Write(context.Background(), messageType, data)
 }
 
