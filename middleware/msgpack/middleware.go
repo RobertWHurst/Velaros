@@ -64,6 +64,10 @@ func Middleware() func(ctx *velaros.Context) {
 			Path string `msgpack:"path"`
 		}
 		if err := msgpack.Unmarshal(ctx.Data(), &messageData); err != nil {
+			if secWebSocketProtocol == "" {
+				ctx.Next()
+				return
+			}
 			ctx.Error = err
 			return
 		}

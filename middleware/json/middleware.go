@@ -64,6 +64,10 @@ func Middleware() func(ctx *velaros.Context) {
 			Path string `json:"path"`
 		}
 		if err := json.Unmarshal(ctx.Data(), &messageData); err != nil {
+			if secWebSocketProtocol == "" {
+				ctx.Next()
+				return
+			}
 			ctx.Error = err
 			return
 		}

@@ -81,6 +81,10 @@ func Middleware() func(ctx *velaros.Context) {
 
 		var env Envelope
 		if err := proto.Unmarshal(ctx.Data(), &env); err != nil {
+			if secWebSocketProtocol == "" {
+				ctx.Next()
+				return
+			}
 			ctx.Error = err
 			return
 		}
