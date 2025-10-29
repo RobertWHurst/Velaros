@@ -644,8 +644,8 @@ func (c *Context) CloseStatus() (Status, string, CloseSource) {
 	if c.socket == nil {
 		return 0, "", 0
 	}
-	c.socket.closeMx.Lock()
-	defer c.socket.closeMx.Unlock()
+	c.socket.closeMu.Lock()
+	defer c.socket.closeMu.Unlock()
 	return c.socket.closeStatus, c.socket.closeReason, c.socket.closeStatusSource
 }
 

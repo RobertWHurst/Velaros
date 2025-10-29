@@ -46,7 +46,8 @@ type Socket struct {
 	interceptors       map[string]chan *InboundMessage
 	associatedValuesMx sync.Mutex
 	associatedValues   map[string]any
-	closeMx            sync.Mutex
+	sendMu             sync.Mutex
+	closeMu            sync.Mutex
 	closed             bool
 	closeStatus        Status
 	closeStatusSource  CloseSource
@@ -91,8 +92,8 @@ func (s *Socket) RemoteAddr() string {
 }
 
 func (s *Socket) Close(status Status, reason string, source CloseSource) {
-	s.closeMx.Lock()
-	defer s.closeMx.Unlock()
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
 	if s.closed {
 		return
 	}
@@ -106,12 +107,14 @@ func (s *Socket) Close(status Status, reason string, source CloseSource) {
 }
 
 func (s *Socket) IsClosed() bool {
-	s.closeMx.Lock()
-	defer s.closeMx.Unlock()
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
 	return s.closed
 }
 
 func (s *Socket) Send(messageType MessageType, data []byte) error {
+	s.sendMu.Lock()
+	defer s.sendMu.Unlock()
 	return s.connection.Write(context.Background(), messageType, data)
 }
 
