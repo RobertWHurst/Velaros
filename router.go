@@ -80,11 +80,16 @@ func (r *Router) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	}
 }
 
+type ConnectionInfo struct {
+	RemoteAddr string
+	Headers    http.Header
+}
+
 // HandleSocket allows creating sockets with custom connections, then driving
 // the router with the socket. This is designed for frameworks that use velaros
 // and shouldn't be used in most cases.
-func (r *Router) HandleConnection(headers http.Header, connection SocketConnection) {
-	socket := NewSocket(headers, connection)
+func (r *Router) HandleConnection(info *ConnectionInfo, connection SocketConnection) {
+	socket := NewSocket(info, connection)
 
 	socket.HandleOpen(r.firstOpenHandlerNode)
 	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
@@ -434,7 +439,11 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 		panic(err)
 	}
 
-	socket := NewSocket(req.Header, conn)
+	info := &ConnectionInfo{
+		RemoteAddr: req.RemoteAddr,
+		Headers:    req.Header,
+	}
+	socket := NewSocket(info, conn)
 
 	socket.HandleOpen(r.firstOpenHandlerNode)
 	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {

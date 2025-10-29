@@ -23,7 +23,7 @@ func TestProtobufMiddleware_ValidMessage(t *testing.T) {
 	envBytes, _ := proto.Marshal(env)
 
 	inboundMsg := &velaros.InboundMessage{Data: envBytes}
-	socket := velaros.NewSocket(http.Header{}, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 
 	nextCalled := false
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {
@@ -71,7 +71,7 @@ func TestProtobufMiddleware_MissingID(t *testing.T) {
 	envBytes, _ := proto.Marshal(env)
 
 	inboundMsg := &velaros.InboundMessage{Data: envBytes}
-	socket := velaros.NewSocket(http.Header{}, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
 	middleware := Middleware()
@@ -97,7 +97,7 @@ func TestProtobufMiddleware_MissingPath(t *testing.T) {
 	envBytes, _ := proto.Marshal(env)
 
 	inboundMsg := &velaros.InboundMessage{Data: envBytes}
-	socket := velaros.NewSocket(http.Header{}, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
 	middleware := Middleware()
@@ -118,7 +118,10 @@ func TestProtobufMiddleware_MissingPath(t *testing.T) {
 
 func TestProtobufMiddleware_InvalidProtobuf(t *testing.T) {
 	inboundMsg := &velaros.InboundMessage{Data: []byte("invalid protobuf \xFF\xFE")}
-	socket := velaros.NewSocket(http.Header{}, nil)
+
+	headers := http.Header{}
+	headers.Set("Sec-WebSocket-Protocol", "velaros-protobuf")
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{Headers: headers}, nil)
 
 	nextCalled := false
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {
@@ -148,7 +151,7 @@ func TestProtobufMiddleware_NonProtoMessage(t *testing.T) {
 	envBytes, _ := proto.Marshal(env)
 
 	inboundMsg := &velaros.InboundMessage{Data: envBytes}
-	socket := velaros.NewSocket(http.Header{}, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
 	middleware := Middleware()
@@ -175,7 +178,7 @@ func TestProtobufMiddleware_ProtocolValidation_Valid(t *testing.T) {
 
 	headers := http.Header{}
 	headers.Set("Sec-WebSocket-Protocol", "velaros-protobuf")
-	socket := velaros.NewSocket(headers, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{Headers: headers}, nil)
 
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
@@ -198,7 +201,7 @@ func TestProtobufMiddleware_ProtocolValidation_Invalid(t *testing.T) {
 
 	headers := http.Header{}
 	headers.Set("Sec-WebSocket-Protocol", "wrong-protocol")
-	socket := velaros.NewSocket(headers, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{Headers: headers}, nil)
 
 	nextCalled := false
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {
@@ -225,7 +228,7 @@ func TestProtobufMiddleware_ProtocolValidation_Empty(t *testing.T) {
 	envBytes, _ := proto.Marshal(env)
 
 	inboundMsg := &velaros.InboundMessage{Data: envBytes}
-	socket := velaros.NewSocket(http.Header{}, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 

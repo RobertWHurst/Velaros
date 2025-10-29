@@ -40,7 +40,7 @@ type SocketConnection interface {
 //   - Access to original HTTP upgrade request headers
 type Socket struct {
 	id                 string
-	requestHeaders     http.Header
+	connectionInfo     *ConnectionInfo
 	connection         SocketConnection
 	interceptorsMx     sync.Mutex
 	interceptors       map[string]chan *InboundMessage
@@ -60,10 +60,10 @@ var _ context.Context = &Socket{}
 // NewSocket creates a new Socket wrapping a WebSocket connection. This is
 // primarily for internal use by the router. The socket ID is automatically
 // generated and the done channel is initialized.
-func NewSocket(requestHeaders http.Header, conn SocketConnection) *Socket {
+func NewSocket(info *ConnectionInfo, conn SocketConnection) *Socket {
 	s := &Socket{
 		id:               uuid.NewString(),
-		requestHeaders:   requestHeaders,
+		connectionInfo:   info,
 		connection:       conn,
 		interceptors:     map[string]chan *InboundMessage{},
 		associatedValues: map[string]any{},
@@ -77,7 +77,17 @@ func (s *Socket) ID() string {
 }
 
 func (s *Socket) Headers() http.Header {
-	return s.requestHeaders
+	if s.connectionInfo != nil && s.connectionInfo.Headers != nil {
+		return s.connectionInfo.Headers
+	}
+	return http.Header{}
+}
+
+func (s *Socket) RemoteAddr() string {
+	if s.connectionInfo != nil {
+		return s.connectionInfo.RemoteAddr
+	}
+	return ""
 }
 
 func (s *Socket) Close(status Status, reason string, source CloseSource) {

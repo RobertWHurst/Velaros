@@ -332,7 +332,16 @@ func (c *Context) Headers() http.Header {
 	if c.socket == nil {
 		return nil
 	}
-	return c.socket.requestHeaders
+	return c.socket.Headers()
+}
+
+// RemoteAddr returns the remote address of the client for the WebSocket
+// connection.
+func (c *Context) RemoteAddr() string {
+	if c.socket == nil {
+		return ""
+	}
+	return c.socket.RemoteAddr()
 }
 
 // Params returns the parameters extracted from the message path based on the

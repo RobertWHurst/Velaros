@@ -18,7 +18,7 @@ func TestJSONMiddleware_ValidMessage(t *testing.T) {
 	msgBytes, _ := json.Marshal(msgData)
 
 	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
-	socket := velaros.NewSocket(http.Header{}, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 
 	nextCalled := false
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {
@@ -66,7 +66,7 @@ func TestJSONMiddleware_MissingID(t *testing.T) {
 	msgBytes, _ := json.Marshal(msgData)
 
 	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
-	socket := velaros.NewSocket(http.Header{}, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
 	middleware := Middleware()
@@ -89,7 +89,7 @@ func TestJSONMiddleware_MissingPath(t *testing.T) {
 	msgBytes, _ := json.Marshal(msgData)
 
 	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
-	socket := velaros.NewSocket(http.Header{}, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
 	middleware := Middleware()
@@ -110,7 +110,10 @@ func TestJSONMiddleware_MissingPath(t *testing.T) {
 
 func TestJSONMiddleware_InvalidJSON(t *testing.T) {
 	inboundMsg := &velaros.InboundMessage{Data: []byte("invalid json {{")}
-	socket := velaros.NewSocket(http.Header{}, nil)
+
+	headers := http.Header{}
+	headers.Set("Sec-WebSocket-Protocol", "velaros-json")
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{Headers: headers}, nil)
 
 	nextCalled := false
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {
@@ -137,7 +140,7 @@ func TestJSONMiddleware_ProtocolValidation_Valid(t *testing.T) {
 
 	headers := http.Header{}
 	headers.Set("Sec-WebSocket-Protocol", "velaros-json")
-	socket := velaros.NewSocket(headers, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{Headers: headers}, nil)
 
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
@@ -157,7 +160,7 @@ func TestJSONMiddleware_ProtocolValidation_Invalid(t *testing.T) {
 
 	headers := http.Header{}
 	headers.Set("Sec-WebSocket-Protocol", "wrong-protocol")
-	socket := velaros.NewSocket(headers, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{Headers: headers}, nil)
 
 	nextCalled := false
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {
@@ -181,7 +184,7 @@ func TestJSONMiddleware_ProtocolValidation_Empty(t *testing.T) {
 	msgBytes, _ := json.Marshal(msgData)
 
 	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
-	socket := velaros.NewSocket(http.Header{}, nil)
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
