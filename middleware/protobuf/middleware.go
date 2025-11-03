@@ -1,6 +1,7 @@
 package protobuf
 
 import (
+	"encoding/json"
 	"errors"
 
 	"github.com/RobertWHurst/velaros"
@@ -98,6 +99,19 @@ func Middleware() func(ctx *velaros.Context) {
 
 		ctx.SetMessageData(env.Data)
 
+		if len(env.Meta) > 0 {
+			meta := make(map[string]any)
+			for key, value := range env.Meta {
+				var deserializedValue any
+				if err := json.Unmarshal(value, &deserializedValue); err != nil {
+					meta[key] = value
+				} else {
+					meta[key] = deserializedValue
+				}
+			}
+			ctx.SetMessageMeta(meta)
+		}
+
 		ctx.SetMessageUnmarshaler(func(message *velaros.InboundMessage, into any) error {
 			protoMsg, ok := into.(proto.Message)
 			if !ok {
@@ -121,6 +135,7 @@ func Middleware() func(ctx *velaros.Context) {
 				Id:   message.ID,
 				Data: data,
 			}
+
 
 			return proto.Marshal(envelope)
 		})

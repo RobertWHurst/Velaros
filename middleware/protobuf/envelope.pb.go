@@ -21,16 +21,17 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
-// Envelope wraps user protocol buffer messages with routing metadata.
-// This message type is internal to the Velaros protobuf middleware and is
-// transparent to users - they work directly with their own .proto definitions.
+// Envelope wraps your protocol buffer messages with routing metadata.
+// This is internal to the Velaros protobuf middleware - on the server side
+// you work directly with your own .proto definitions without envelope awareness.
 //
 // The envelope provides:
 //   - Message ID for request/reply correlation
 //   - Path for routing to handlers
-//   - Data field containing the user's serialized protobuf message
+//   - Data field containing your serialized protobuf message
+//   - Meta field for optional metadata (authentication tokens, tracing IDs, etc.)
 //
-// Users define their own .proto schemas following the standard Protocol Buffers
+// Define your own .proto schemas following the standard Protocol Buffers
 // tutorial and use them directly with Velaros. The middleware automatically
 // wraps and unwraps messages in this envelope format.
 type Envelope struct {
@@ -41,9 +42,13 @@ type Envelope struct {
 	// path is the message path used for routing to handlers.
 	// Format can be gRPC-style ("/package.Service/Method") or custom ("/api/users/get").
 	Path string `protobuf:"bytes,2,opt,name=path,proto3" json:"path,omitempty"`
-	// data contains the user's serialized protocol buffer message.
-	// This is the bytes from proto.Marshal(userMessage).
-	Data          []byte `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	// data contains your serialized protocol buffer message.
+	// This is the bytes from proto.Marshal(yourMessage).
+	Data []byte `protobuf:"bytes,3,opt,name=data,proto3" json:"data,omitempty"`
+	// meta contains optional metadata attached to the message.
+	// Applications can use this to pass authentication tokens, tracing IDs,
+	// or other contextual information alongside message data.
+	Meta          map[string][]byte `protobuf:"bytes,4,rep,name=meta,proto3" json:"meta,omitempty" protobuf_key:"bytes,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -99,15 +104,26 @@ func (x *Envelope) GetData() []byte {
 	return nil
 }
 
+func (x *Envelope) GetMeta() map[string][]byte {
+	if x != nil {
+		return x.Meta
+	}
+	return nil
+}
+
 var File_envelope_proto protoreflect.FileDescriptor
 
 const file_envelope_proto_rawDesc = "" +
 	"\n" +
-	"\x0eenvelope.proto\x12\x10velaros.protobuf\"B\n" +
+	"\x0eenvelope.proto\x12\x10velaros.protobuf\"\xb5\x01\n" +
 	"\bEnvelope\x12\x0e\n" +
 	"\x02id\x18\x01 \x01(\tR\x02id\x12\x12\n" +
 	"\x04path\x18\x02 \x01(\tR\x04path\x12\x12\n" +
-	"\x04data\x18\x03 \x01(\fR\x04dataB5Z3github.com/RobertWHurst/velaros/middleware/protobufb\x06proto3"
+	"\x04data\x18\x03 \x01(\fR\x04data\x128\n" +
+	"\x04meta\x18\x04 \x03(\v2$.velaros.protobuf.Envelope.MetaEntryR\x04meta\x1a7\n" +
+	"\tMetaEntry\x12\x10\n" +
+	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
+	"\x05value\x18\x02 \x01(\fR\x05value:\x028\x01B5Z3github.com/RobertWHurst/velaros/middleware/protobufb\x06proto3"
 
 var (
 	file_envelope_proto_rawDescOnce sync.Once
@@ -121,16 +137,18 @@ func file_envelope_proto_rawDescGZIP() []byte {
 	return file_envelope_proto_rawDescData
 }
 
-var file_envelope_proto_msgTypes = make([]protoimpl.MessageInfo, 1)
+var file_envelope_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
 var file_envelope_proto_goTypes = []any{
 	(*Envelope)(nil), // 0: velaros.protobuf.Envelope
+	nil,              // 1: velaros.protobuf.Envelope.MetaEntry
 }
 var file_envelope_proto_depIdxs = []int32{
-	0, // [0:0] is the sub-list for method output_type
-	0, // [0:0] is the sub-list for method input_type
-	0, // [0:0] is the sub-list for extension type_name
-	0, // [0:0] is the sub-list for extension extendee
-	0, // [0:0] is the sub-list for field type_name
+	1, // 0: velaros.protobuf.Envelope.meta:type_name -> velaros.protobuf.Envelope.MetaEntry
+	1, // [1:1] is the sub-list for method output_type
+	1, // [1:1] is the sub-list for method input_type
+	1, // [1:1] is the sub-list for extension type_name
+	1, // [1:1] is the sub-list for extension extendee
+	0, // [0:1] is the sub-list for field type_name
 }
 
 func init() { file_envelope_proto_init() }
@@ -144,7 +162,7 @@ func file_envelope_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_envelope_proto_rawDesc), len(file_envelope_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   1,
+			NumMessages:   2,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

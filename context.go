@@ -411,6 +411,29 @@ func (c *Context) SetMessageData(data []byte) {
 	c.message.Data = data
 }
 
+func (c *Context) SetMessageMeta(meta map[string]any) {
+	c.message.Meta = meta
+}
+
+// Meta retrieves a value from the message metadata by key.
+// Returns the value and true if the key exists, or nil and false otherwise.
+// Metadata can be used to pass authentication tokens, tracing IDs, or other
+// contextual information alongside message data.
+//
+// Example:
+//
+//	userId, ok := ctx.Meta("userId")
+//	if ok {
+//	    log.Printf("Request from user: %v", userId)
+//	}
+func (c *Context) Meta(key string) (any, bool) {
+	if c.message == nil || c.message.Meta == nil {
+		return nil, false
+	}
+	value, ok := c.message.Meta[key]
+	return value, ok
+}
+
 // Send sends a message to the client without correlating it to the current
 // message. The data is marshalled using the marshaller set by middleware
 // (typically JSON middleware). Returns an error if marshalling or sending fails.

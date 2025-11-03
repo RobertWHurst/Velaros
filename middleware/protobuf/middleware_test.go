@@ -239,3 +239,97 @@ func TestProtobufMiddleware_ProtocolValidation_Empty(t *testing.T) {
 		t.Fatalf("unexpected error: %v", ctx.Error)
 	}
 }
+
+func TestProtobufMiddleware_Meta_Incoming(t *testing.T) {
+	testReq := &TestRequest{UserId: 42, Name: "Alice"}
+	reqBytes, _ := proto.Marshal(testReq)
+
+	env := &Envelope{
+		Id:   "msg-123",
+		Path: "/test",
+		Data: reqBytes,
+		Meta: map[string][]byte{
+			"userId":  []byte(`"user-456"`),
+			"traceId": []byte(`"trace-789"`),
+			"role":    []byte(`"admin"`),
+		},
+	}
+	envBytes, _ := proto.Marshal(env)
+
+	inboundMsg := &velaros.InboundMessage{Data: envBytes}
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
+
+	nextCalled := false
+	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {
+		nextCalled = true
+	})
+
+	middleware := Middleware()
+	middleware(ctx)
+
+	if ctx.Error != nil {
+		t.Fatalf("unexpected error: %v", ctx.Error)
+	}
+
+	if !nextCalled {
+		t.Error("expected Next() to be called")
+	}
+
+	userId, ok := ctx.Meta("userId")
+	if !ok {
+		t.Error("expected Meta to find userId")
+	}
+	if userId != "user-456" {
+		t.Errorf("expected userId 'user-456', got %v", userId)
+	}
+
+	traceId, ok := ctx.Meta("traceId")
+	if !ok {
+		t.Error("expected Meta to find traceId")
+	}
+	if traceId != "trace-789" {
+		t.Errorf("expected traceId 'trace-789', got %v", traceId)
+	}
+
+	role, ok := ctx.Meta("role")
+	if !ok {
+		t.Error("expected Meta to find role")
+	}
+	if role != "admin" {
+		t.Errorf("expected role 'admin', got %v", role)
+	}
+
+	_, ok = ctx.Meta("nonexistent")
+	if ok {
+		t.Error("expected Meta to return false for nonexistent key")
+	}
+}
+
+
+func TestProtobufMiddleware_Meta_MissingMeta(t *testing.T) {
+	testReq := &TestRequest{UserId: 1}
+	reqBytes, _ := proto.Marshal(testReq)
+
+	env := &Envelope{
+		Id:   "msg-123",
+		Path: "/test",
+		Data: reqBytes,
+	}
+	envBytes, _ := proto.Marshal(env)
+
+	inboundMsg := &velaros.InboundMessage{Data: envBytes}
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
+	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
+
+	middleware := Middleware()
+	middleware(ctx)
+
+	if ctx.Error != nil {
+		t.Fatalf("unexpected error: %v", ctx.Error)
+	}
+
+	_, ok := ctx.Meta("anyKey")
+	if ok {
+		t.Error("expected Meta to return false when meta is nil")
+	}
+}

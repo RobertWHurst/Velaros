@@ -166,6 +166,22 @@ Encoding/decoding middleware can also provide marshallers and unmarshallers by c
 
 Message IDs are required for bidirectional request/reply patterns. When a client sends a message with an ID, handlers can use `Reply()` to send a response with the same ID. When handlers use `Request()` to query the client, the server generates an ID that the client must echo back in their response for proper correlation.
 
+**Message Metadata** - Messages can optionally include metadata alongside the message data. Middleware can extract metadata by calling `ctx.SetMessageMeta()`, making it available through `ctx.Meta(key)`. This is useful for passing contextual information like authentication tokens, tracing IDs, request IDs, or other cross-cutting concerns that don't belong in the message data itself.
+
+```go
+router.Bind("/api/data", func(ctx *velaros.Context) {
+    if userId, ok := ctx.Meta("userId"); ok {
+        log.Printf("Request from user: %v", userId)
+    }
+
+    if traceId, ok := ctx.Meta("traceId"); ok {
+        log.Printf("Trace ID: %v", traceId)
+    }
+
+    ctx.Reply(DataResponse{Items: getData()})
+})
+```
+
 Velaros provides encoding/decoding middleware for common formats: **JSON** (human-readable), **MessagePack** (binary, high-performance), and **Protocol Buffers** (strongly-typed, cross-language, production-grade). You can also create custom encoding/decoding middleware for other formats like CBOR, or even plain text/binary protocols. See the [Built-in Middleware](#built-in-middleware) section for details on each format.
 
 ### Context
@@ -368,6 +384,10 @@ The JSON middleware expects messages in this format:
     "data": {
         "username": "alice",
         "email": "alice@example.com"
+    },
+    "meta": {
+        "userId": "user-123",
+        "traceId": "trace-456"
     }
 }
 ```
@@ -375,6 +395,7 @@ The JSON middleware expects messages in this format:
 - **path** (string, required): Routes the message to the appropriate handler
 - **id** (string, optional): For request/reply correlation - include when you expect a reply
 - **data** (any, optional): The actual message payload that gets passed to `ctx.Unmarshal()`
+- **meta** (object, optional): Metadata for passing contextual information like auth tokens or tracing IDs
 
 Responses follow the same structure:
 

@@ -412,3 +412,89 @@ func TestJSONMiddleware_Marshaller_MultipleFieldErrors(t *testing.T) {
 		t.Errorf("expected password error 'too short', got %v", field1["password"])
 	}
 }
+
+func TestJSONMiddleware_Meta_Incoming(t *testing.T) {
+	msgData := map[string]any{
+		"id":   "msg-123",
+		"path": "/test",
+		"meta": map[string]any{
+			"userId":  "user-456",
+			"traceId": "trace-789",
+			"role":    "admin",
+		},
+	}
+	msgBytes, _ := json.Marshal(msgData)
+
+	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
+
+	nextCalled := false
+	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {
+		nextCalled = true
+	})
+
+	middleware := Middleware()
+	middleware(ctx)
+
+	if ctx.Error != nil {
+		t.Fatalf("unexpected error: %v", ctx.Error)
+	}
+
+	if !nextCalled {
+		t.Error("expected Next() to be called")
+	}
+
+	// Test Meta method
+	userId, ok := ctx.Meta("userId")
+	if !ok {
+		t.Error("expected Meta to find userId")
+	}
+	if userId != "user-456" {
+		t.Errorf("expected userId 'user-456', got %v", userId)
+	}
+
+	traceId, ok := ctx.Meta("traceId")
+	if !ok {
+		t.Error("expected Meta to find traceId")
+	}
+	if traceId != "trace-789" {
+		t.Errorf("expected traceId 'trace-789', got %v", traceId)
+	}
+
+	role, ok := ctx.Meta("role")
+	if !ok {
+		t.Error("expected Meta to find role")
+	}
+	if role != "admin" {
+		t.Errorf("expected role 'admin', got %v", role)
+	}
+
+	_, ok = ctx.Meta("nonexistent")
+	if ok {
+		t.Error("expected Meta to return false for nonexistent key")
+	}
+}
+
+func TestJSONMiddleware_Meta_MissingMeta(t *testing.T) {
+	msgData := map[string]any{
+		"id":   "msg-123",
+		"path": "/test",
+	}
+	msgBytes, _ := json.Marshal(msgData)
+
+	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
+	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
+
+	middleware := Middleware()
+	middleware(ctx)
+
+	if ctx.Error != nil {
+		t.Fatalf("unexpected error: %v", ctx.Error)
+	}
+
+	_, ok := ctx.Meta("anyKey")
+	if ok {
+		t.Error("expected Meta to return false when meta is nil")
+	}
+}

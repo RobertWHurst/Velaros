@@ -60,8 +60,9 @@ func Middleware() func(ctx *velaros.Context) {
 		}
 
 		var messageData struct {
-			ID   string `msgpack:"id"`
-			Path string `msgpack:"path"`
+			ID   string         `msgpack:"id"`
+			Path string         `msgpack:"path"`
+			Meta map[string]any `msgpack:"meta"`
 		}
 		if err := msgpack.Unmarshal(ctx.Data(), &messageData); err != nil {
 			if secWebSocketProtocol == "" {
@@ -77,6 +78,9 @@ func Middleware() func(ctx *velaros.Context) {
 		}
 		if messageData.Path != "" {
 			ctx.SetMessagePath(messageData.Path)
+		}
+		if messageData.Meta != nil {
+			ctx.SetMessageMeta(messageData.Meta)
 		}
 
 		ctx.SetMessageUnmarshaler(func(message *velaros.InboundMessage, into any) error {

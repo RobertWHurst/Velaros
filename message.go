@@ -29,6 +29,10 @@ type InboundMessage struct {
 	// Data contains the raw message payload as bytes. Handlers can unmarshal this
 	// data using ctx.Unmarshal() if middleware has configured an unmarshaler.
 	Data []byte
+
+	// Meta contains optional metadata attached to the message. Applications can use
+	// this to pass authentication tokens, tracing IDs, or other contextual information.
+	Meta map[string]any
 }
 
 var inboundMessagePool = sync.Pool{
@@ -44,6 +48,7 @@ func inboundMessageFromPool() *InboundMessage {
 	msg.ID = ""
 	msg.Path = ""
 	msg.Data = nil
+	msg.Meta = nil
 	return msg
 }
 
