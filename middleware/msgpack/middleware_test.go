@@ -10,10 +10,12 @@ import (
 
 func TestMessagePackMiddleware_ValidMessage(t *testing.T) {
 	msgData := map[string]any{
-		"id":      "msg-123",
-		"path":    "/users/get",
-		"user_id": int64(42),
-		"name":    "Alice",
+		"id":   "msg-123",
+		"path": "/users/get",
+		"data": map[string]any{
+			"user_id": int64(42),
+			"name":    "Alice",
+		},
 	}
 	msgBytes, _ := msgpack.Marshal(msgData)
 

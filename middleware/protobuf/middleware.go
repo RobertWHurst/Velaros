@@ -80,8 +80,8 @@ func Middleware() func(ctx *velaros.Context) {
 			return
 		}
 
-		var env Envelope
-		if err := proto.Unmarshal(ctx.Data(), &env); err != nil {
+		var messageData Envelope
+		if err := proto.Unmarshal(ctx.Data(), &messageData); err != nil {
 			if secWebSocketProtocol == "" {
 				ctx.Next()
 				return
@@ -90,18 +90,16 @@ func Middleware() func(ctx *velaros.Context) {
 			return
 		}
 
-		if env.Id != "" {
-			ctx.SetMessageID(env.Id)
+		if messageData.Id != "" {
+			ctx.SetMessageID(messageData.Id)
 		}
-		if env.Path != "" {
-			ctx.SetMessagePath(env.Path)
+		if messageData.Path != "" {
+			ctx.SetMessagePath(messageData.Path)
 		}
 
-		ctx.SetMessageData(env.Data)
-
-		if len(env.Meta) > 0 {
+		if len(messageData.Meta) > 0 {
 			meta := make(map[string]any)
-			for key, value := range env.Meta {
+			for key, value := range messageData.Meta {
 				var deserializedValue any
 				if err := json.Unmarshal(value, &deserializedValue); err != nil {
 					meta[key] = value
@@ -117,7 +115,7 @@ func Middleware() func(ctx *velaros.Context) {
 			if !ok {
 				return errors.New("value must implement proto.Message (generated protobuf struct)")
 			}
-			return proto.Unmarshal(message.Data, protoMsg)
+			return proto.Unmarshal(messageData.Data, protoMsg)
 		})
 
 		ctx.SetMessageMarshaller(func(message *velaros.OutboundMessage) ([]byte, error) {
