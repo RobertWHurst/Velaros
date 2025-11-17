@@ -13,3 +13,11 @@ func CtxSocket(ctx *Context) *Socket {
 func CtxFree(ctx *Context) {
 	ctx.free()
 }
+
+func CtxAssociatedValues(ctx *Context) map[string]any {
+	return ctx.associatedValues
+}
+
+func CtxSocketAssociatedValues(ctx *Context) map[string]any {
+	return ctx.socket.associatedValues
+}
