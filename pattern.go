@@ -123,7 +123,13 @@ func (p *Pattern) MatchInto(path string, params *MessageParams) bool {
 	}
 	for i := 1; i < len(keys); i += 1 {
 		if keys[i] != "" {
-			(*params)[keys[i]] = path[matchIndices[i*2]:matchIndices[i*2+1]]
+			startIdx := matchIndices[i*2]
+			endIdx := matchIndices[i*2+1]
+			if startIdx >= 0 && endIdx >= 0 {
+				(*params)[keys[i]] = path[startIdx:endIdx]
+			} else {
+				(*params)[keys[i]] = ""
+			}
 		}
 	}
 
