@@ -19,9 +19,16 @@ const (
 	MessageBinary MessageType = websocket.MessageBinary
 )
 
+type SocketMessage struct {
+	Type                    MessageType
+	Data                    []byte
+	SocketAssociatedValues  map[string]any
+	MessageAssociatedValues map[string]any
+}
+
 type SocketConnection interface {
-	Read(ctx context.Context) (MessageType, []byte, error)
-	Write(ctx context.Context, messageType MessageType, data []byte) error
+	Read(ctx context.Context) (*SocketMessage, error)
+	Write(ctx context.Context, msg *SocketMessage) error
 	Close(status Status, reason string) error
 }
 
@@ -111,8 +118,13 @@ func (s *Socket) IsClosed() bool {
 	return s.closed
 }
 
-func (s *Socket) Send(messageType MessageType, data []byte) error {
-	return s.connection.Write(context.Background(), messageType, data)
+func (s *Socket) Send(messageType MessageType, data []byte, associatedMessageValues map[string]any) error {
+	return s.connection.Write(context.Background(), &SocketMessage{
+		Type:                    messageType,
+		Data:                    data,
+		SocketAssociatedValues:  s.associatedValues,
+		MessageAssociatedValues: associatedMessageValues,
+	})
 }
 
 func (s *Socket) Set(key string, value any) {
@@ -145,7 +157,7 @@ func (s *Socket) Delete(key string) {
 }
 
 func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
-	msgType, msg, err := s.connection.Read(s)
+	msg, err := s.connection.Read(s)
 	if err != nil {
 		closeStatus := websocket.CloseStatus(err)
 		if closeStatus != -1 {
@@ -160,9 +172,17 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 
 	go func() {
 		inboundMsg := inboundMessageFromPool()
-		inboundMsg.Data = msg
+		inboundMsg.Data = msg.Data
 
-		ctx := NewContextWithNodeAndMessageType(s, inboundMsg, node, msgType)
+		ctx := NewContextWithNodeAndMessageType(s, inboundMsg, node, msg.Type)
+
+		for k, v := range s.associatedValues {
+			ctx.Set(k, v)
+		}
+		for k, v := range msg.SocketAssociatedValues {
+			ctx.socket.Set(k, v)
+		}
+
 		ctx.Next()
 		ctx.free()
 	}()

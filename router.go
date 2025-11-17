@@ -443,7 +443,7 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 		RemoteAddr: req.RemoteAddr,
 		Headers:    req.Header,
 	}
-	socket := NewSocket(info, conn)
+	socket := NewSocket(info, NewWebSocketConnection(conn))
 
 	socket.HandleOpen(r.firstOpenHandlerNode)
 	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {

@@ -454,7 +454,7 @@ func (c *Context) Send(data any) error {
 	if err != nil {
 		return err
 	}
-	return c.socket.Send(c.messageType, msgBuf)
+	return c.socket.Send(c.messageType, msgBuf, c.associatedValues)
 }
 
 // Reply sends a message to the client in response to the current message.
@@ -482,7 +482,7 @@ func (c *Context) Reply(data any) error {
 	if err != nil {
 		return err
 	}
-	return c.socket.Send(c.messageType, msgBuf)
+	return c.socket.Send(c.messageType, msgBuf, c.associatedValues)
 }
 
 // Request sends a message to the client and waits for a response. This enables
@@ -535,7 +535,7 @@ func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error)
 		return nil, err
 	}
 
-	if err := c.socket.Send(c.messageType, msgBuf); err != nil {
+	if err := c.socket.Send(c.messageType, msgBuf, c.associatedValues); err != nil {
 		return nil, err
 	}
 
@@ -601,7 +601,7 @@ func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any
 		return err
 	}
 
-	if err := c.socket.Send(c.messageType, msgBuf); err != nil {
+	if err := c.socket.Send(c.messageType, msgBuf, c.associatedValues); err != nil {
 		return err
 	}
 
