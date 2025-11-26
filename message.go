@@ -26,6 +26,11 @@ type InboundMessage struct {
 	// against this path to determine which handlers should execute.
 	Path string
 
+	// Data contains the raw message payload as bytes. Handlers can parse this data
+	// and call ctx.SetMessageData() to populate the Data field, as well as
+	// ctx.SetMessageMeta() to populate the Meta field.
+	RawData []byte
+
 	// Data contains the raw message payload as bytes. Handlers can unmarshal this
 	// data using ctx.Unmarshal() if middleware has configured an unmarshaler.
 	Data []byte
@@ -47,6 +52,7 @@ func inboundMessageFromPool() *InboundMessage {
 	msg.hasSetPath = false
 	msg.ID = ""
 	msg.Path = ""
+	msg.RawData = nil
 	msg.Data = nil
 	msg.Meta = nil
 	return msg

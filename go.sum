@@ -1,5 +1,5 @@
-github.com/RobertWHurst/navaros v1.14.1 h1:w579pI207Q3XGGaIK0qbeuvoeIMpbrkgSXpLVn0OEtE=
-github.com/RobertWHurst/navaros v1.14.1/go.mod h1:0QO7XN4pS+fvI6UqNYcHFaYSO1L8J56TCrJvYD7T3eQ=
+github.com/RobertWHurst/navaros v1.14.2 h1:IgIM/pmiZokLEljtMc8dMpemJNAQO4zmEBNhbfCDO8U=
+github.com/RobertWHurst/navaros v1.14.2/go.mod h1:0QO7XN4pS+fvI6UqNYcHFaYSO1L8J56TCrJvYD7T3eQ=
 github.com/coder/websocket v1.8.14 h1:9L0p0iKiNOibykf283eHkKUHHrpG7f65OE3BhhO7v9g=
 github.com/coder/websocket v1.8.14/go.mod h1:NX3SzP+inril6yawo5CQXx8+fk145lPDC6pumgx0mVg=
 github.com/davecgh/go-spew v1.1.0 h1:ZDRjVQ15GmhC3fiQ8ni8+OwkZQO4DARzQgrnXU1Liz8=

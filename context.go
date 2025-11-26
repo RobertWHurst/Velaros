@@ -92,13 +92,13 @@ func NewContextWithNodeAndMessageType(socket *Socket, message *InboundMessage, f
 	ctx := contextFromPool()
 	ctx.ctx, ctx.cancelCtx = context.WithCancel(socket)
 
-	if message.ID == "" {
-		message.ID = uuid.NewString()
-	}
-
 	ctx.socket = socket
 	ctx.message = message
 	ctx.messageType = messageType
+
+	if message.ID == "" {
+		message.ID = uuid.NewString()
+	}
 
 	ctx.currentHandlerNode = firstHandlerNode
 
@@ -115,10 +115,26 @@ func NewSubContextWithNode(ctx *Context, firstHandlerNode *HandlerNode) *Context
 	subCtx.parentContext = ctx
 
 	subCtx.socket = ctx.socket
-	subCtx.message = ctx.message
+
+	// Get a fresh message from the pool to prevent sub-contexts from sharing
+	// message references with parent contexts. If the parent is freed and its
+	// message recycled while the sub-context is still alive (e.g., in a blocking
+	// handler), the sub-context would see the recycled message's fields.
+	subMsg := inboundMessageFromPool()
+	subMsg.hasSetID = ctx.message.hasSetID
+	subMsg.hasSetPath = ctx.message.hasSetPath
+	subMsg.ID = ctx.message.ID
+	subMsg.Path = ctx.message.Path
+	subMsg.RawData = ctx.message.RawData
+	subMsg.Data = ctx.message.Data
+	subMsg.Meta = ctx.message.Meta
+	subCtx.message = subMsg
+
 	subCtx.messageType = ctx.messageType
 
-	subCtx.params = ctx.params
+	for k, v := range ctx.params {
+		subCtx.params[k] = v
+	}
 
 	subCtx.Error = ctx.Error
 	subCtx.ErrorStack = ctx.ErrorStack
@@ -193,16 +209,6 @@ func (c *Context) tryUpdateParent() {
 	for k, v := range c.associatedValues {
 		c.parentContext.associatedValues[k] = v
 	}
-}
-
-// Next continues execution to the next handler in the chain. Middleware
-// should call Next() to pass control to subsequent handlers, then perform
-// any post-processing after Next() returns.
-//
-// If an error is set on the context (via Error field or panic), subsequent
-// handlers are skipped. Next() is safe to call multiple times.
-func (c *Context) Next() {
-	c.next()
 }
 
 // SetOnSocket stores a value at the socket/connection level. Values stored
@@ -302,8 +308,13 @@ func (c *Context) MessageID() string {
 	return c.message.ID
 }
 
-// Data returns the raw byte data of the current message. This is the message
-// data after middleware has potentially modified it via SetMessageData().
+// RawData returns the raw byte data of the current message.
+func (c *Context) RawData() []byte {
+	return c.message.RawData
+}
+
+// Data returns the processed data of the current message. This data will have
+// been parsed or extracted by handlers and set via SetMessageData().
 func (c *Context) Data() []byte {
 	return c.message.Data
 }
@@ -405,12 +416,21 @@ func (c *Context) SetMessagePath(path string) {
 	c.message.hasSetPath = true
 }
 
+// SetMessageRawData replaces the raw message data. This is useful for middleware
+// that needs to transform or filter the message payload before it reaches handlers.
+func (c *Context) SetMessageRawData(rawData []byte) {
+	c.message.RawData = rawData
+}
+
 // SetMessageData replaces the raw message data. This is useful for middleware
 // that needs to transform or filter the message payload before it reaches handlers.
 func (c *Context) SetMessageData(data []byte) {
 	c.message.Data = data
 }
 
+// SetMessageMeta sets the metadata map for the current message. Metadata can
+// be used to pass authentication tokens, tracing IDs, or other contextual
+// information alongside message data.
 func (c *Context) SetMessageMeta(meta map[string]any) {
 	c.message.Meta = meta
 }
@@ -454,7 +474,7 @@ func (c *Context) Send(data any) error {
 	if err != nil {
 		return err
 	}
-	return c.socket.Send(c.messageType, msgBuf, c.associatedValues)
+	return c.socket.Send(c.messageType, msgBuf)
 }
 
 // Reply sends a message to the client in response to the current message.
@@ -482,7 +502,7 @@ func (c *Context) Reply(data any) error {
 	if err != nil {
 		return err
 	}
-	return c.socket.Send(c.messageType, msgBuf, c.associatedValues)
+	return c.socket.Send(c.messageType, msgBuf)
 }
 
 // Request sends a message to the client and waits for a response. This enables
@@ -535,7 +555,7 @@ func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error)
 		return nil, err
 	}
 
-	if err := c.socket.Send(c.messageType, msgBuf, c.associatedValues); err != nil {
+	if err := c.socket.Send(c.messageType, msgBuf); err != nil {
 		return nil, err
 	}
 
@@ -601,7 +621,7 @@ func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any
 		return err
 	}
 
-	if err := c.socket.Send(c.messageType, msgBuf, c.associatedValues); err != nil {
+	if err := c.socket.Send(c.messageType, msgBuf); err != nil {
 		return err
 	}
 

@@ -39,7 +39,7 @@ func writeMessage(tb testing.TB, conn *websocket.Conn, ctx context.Context, id, 
 		msg["id"] = id
 	}
 	if data != nil {
-		msg["msg"] = data.(testMessage).Msg
+		msg["data"] = data
 	}
 	msgBytes, err := json.Marshal(msg)
 	if err != nil {

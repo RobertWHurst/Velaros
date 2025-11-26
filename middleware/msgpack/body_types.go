@@ -18,3 +18,16 @@ type FieldError struct {
 	Field string
 	Error string
 }
+
+// genFieldsField converts a slice of FieldErrors into a slice of maps
+// for MessagePack serialization. Each map contains a single field name to error
+// message mapping.
+func genFieldsField(errors []FieldError) []M {
+	var fields []M
+	for _, err := range errors {
+		field := M{}
+		field[err.Field] = err.Error
+		fields = append(fields, field)
+	}
+	return fields
+}

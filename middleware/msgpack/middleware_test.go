@@ -19,7 +19,7 @@ func TestMessagePackMiddleware_ValidMessage(t *testing.T) {
 	}
 	msgBytes, _ := msgpack.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 
 	nextCalled := false
@@ -67,7 +67,7 @@ func TestMessagePackMiddleware_MissingID(t *testing.T) {
 	}
 	msgBytes, _ := msgpack.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
@@ -90,7 +90,7 @@ func TestMessagePackMiddleware_MissingPath(t *testing.T) {
 	}
 	msgBytes, _ := msgpack.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
@@ -138,7 +138,7 @@ func TestMessagePackMiddleware_ProtocolValidation_Valid(t *testing.T) {
 	msgData := map[string]any{"path": "/test"}
 	msgBytes, _ := msgpack.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 
 	headers := http.Header{}
 	headers.Set("Sec-WebSocket-Protocol", "velaros-msgpack")
@@ -158,7 +158,7 @@ func TestMessagePackMiddleware_ProtocolValidation_Invalid(t *testing.T) {
 	msgData := map[string]any{"path": "/test"}
 	msgBytes, _ := msgpack.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 
 	headers := http.Header{}
 	headers.Set("Sec-WebSocket-Protocol", "wrong-protocol")
@@ -185,7 +185,7 @@ func TestMessagePackMiddleware_ProtocolValidation_Empty(t *testing.T) {
 	msgData := map[string]any{"path": "/test"}
 	msgBytes, _ := msgpack.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
@@ -344,6 +344,77 @@ func TestMessagePackMiddleware_Marshaller_SingleFieldError(t *testing.T) {
 	}
 }
 
+func TestMessagePackMiddleware_Marshaller_MultipleFieldErrors(t *testing.T) {
+	outMsg := &velaros.OutboundMessage{
+		Data: []FieldError{
+			{Field: "email", Error: "invalid email format"},
+			{Field: "password", Error: "too short"},
+		},
+	}
+
+	marshaller := func(message *velaros.OutboundMessage) ([]byte, error) {
+		switch v := message.Data.(type) {
+		case []FieldError:
+			message.Data = M{
+				"error":  "Validation error",
+				"fields": genFieldsField(v),
+			}
+		}
+		envelope := map[string]any{}
+		if message.ID != "" {
+			envelope["id"] = message.ID
+		}
+		if message.Data != nil {
+			envelope["data"] = message.Data
+		}
+		return msgpack.Marshal(envelope)
+	}
+
+	resultBytes, err := marshaller(outMsg)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var envelope map[string]any
+	if err := msgpack.Unmarshal(resultBytes, &envelope); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	data, ok := envelope["data"].(map[string]any)
+	if !ok {
+		t.Fatal("expected data to be a map")
+	}
+
+	if data["error"] != "Validation error" {
+		t.Errorf("expected error 'Validation error', got %v", data["error"])
+	}
+
+	fields, ok := data["fields"].([]any)
+	if !ok {
+		t.Fatal("expected fields to be an array")
+	}
+
+	if len(fields) != 2 {
+		t.Fatalf("expected 2 field errors, got %d", len(fields))
+	}
+
+	field0, ok := fields[0].(map[string]any)
+	if !ok {
+		t.Fatal("expected field to be a map")
+	}
+	if field0["email"] != "invalid email format" {
+		t.Errorf("expected email error 'invalid email format', got %v", field0["email"])
+	}
+
+	field1, ok := fields[1].(map[string]any)
+	if !ok {
+		t.Fatal("expected field to be a map")
+	}
+	if field1["password"] != "too short" {
+		t.Errorf("expected password error 'too short', got %v", field1["password"])
+	}
+}
+
 func TestMessagePackMiddleware_Meta_Incoming(t *testing.T) {
 	msgData := map[string]any{
 		"id":   "msg-123",
@@ -356,7 +427,7 @@ func TestMessagePackMiddleware_Meta_Incoming(t *testing.T) {
 	}
 	msgBytes, _ := msgpack.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 
 	nextCalled := false
@@ -375,7 +446,6 @@ func TestMessagePackMiddleware_Meta_Incoming(t *testing.T) {
 		t.Error("expected Next() to be called")
 	}
 
-	// Test Meta method
 	userId, ok := ctx.Meta("userId")
 	if !ok {
 		t.Error("expected Meta to find userId")
@@ -413,7 +483,7 @@ func TestMessagePackMiddleware_Meta_MissingMeta(t *testing.T) {
 	}
 	msgBytes, _ := msgpack.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 

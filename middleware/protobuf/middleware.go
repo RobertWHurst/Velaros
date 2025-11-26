@@ -81,7 +81,7 @@ func Middleware() func(ctx *velaros.Context) {
 		}
 
 		var messageData Envelope
-		if err := proto.Unmarshal(ctx.Data(), &messageData); err != nil {
+		if err := proto.Unmarshal(ctx.RawData(), &messageData); err != nil {
 			if secWebSocketProtocol == "" {
 				ctx.Next()
 				return
@@ -109,13 +109,16 @@ func Middleware() func(ctx *velaros.Context) {
 			}
 			ctx.SetMessageMeta(meta)
 		}
+		if len(messageData.Data) > 0 {
+			ctx.SetMessageData(messageData.Data)
+		}
 
 		ctx.SetMessageUnmarshaler(func(message *velaros.InboundMessage, into any) error {
 			protoMsg, ok := into.(proto.Message)
 			if !ok {
 				return errors.New("value must implement proto.Message (generated protobuf struct)")
 			}
-			return proto.Unmarshal(messageData.Data, protoMsg)
+			return proto.Unmarshal(message.Data, protoMsg)
 		})
 
 		ctx.SetMessageMarshaller(func(message *velaros.OutboundMessage) ([]byte, error) {

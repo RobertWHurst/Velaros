@@ -20,10 +20,10 @@ const (
 )
 
 type SocketMessage struct {
-	Type                    MessageType
-	Data                    []byte
-	SocketAssociatedValues  map[string]any
-	MessageAssociatedValues map[string]any
+	Type    MessageType
+	RawData []byte
+	Data    []byte
+	Meta    map[string]any
 }
 
 type SocketConnection interface {
@@ -118,12 +118,10 @@ func (s *Socket) IsClosed() bool {
 	return s.closed
 }
 
-func (s *Socket) Send(messageType MessageType, data []byte, associatedMessageValues map[string]any) error {
+func (s *Socket) Send(messageType MessageType, data []byte) error {
 	return s.connection.Write(context.Background(), &SocketMessage{
-		Type:                    messageType,
-		Data:                    data,
-		SocketAssociatedValues:  s.associatedValues,
-		MessageAssociatedValues: associatedMessageValues,
+		Type: messageType,
+		Data: data,
 	})
 }
 
@@ -172,17 +170,11 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 
 	go func() {
 		inboundMsg := inboundMessageFromPool()
+		inboundMsg.RawData = msg.RawData
 		inboundMsg.Data = msg.Data
+		inboundMsg.Meta = msg.Meta
 
 		ctx := NewContextWithNodeAndMessageType(s, inboundMsg, node, msg.Type)
-
-		for k, v := range s.associatedValues {
-			ctx.Set(k, v)
-		}
-		for k, v := range msg.SocketAssociatedValues {
-			ctx.socket.Set(k, v)
-		}
-
 		ctx.Next()
 		ctx.free()
 	}()

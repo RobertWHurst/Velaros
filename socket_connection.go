@@ -25,8 +25,8 @@ func (c *WebSocketConnection) Read(ctx context.Context) (*SocketMessage, error) 
 	}
 
 	return &SocketMessage{
-		Type: messageType,
-		Data: data,
+		Type:    messageType,
+		RawData: data,
 	}, nil
 }
 

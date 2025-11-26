@@ -65,7 +65,7 @@ func Middleware() func(ctx *velaros.Context) {
 			Meta map[string]any     `msgpack:"meta"`
 			Data msgpack.RawMessage `msgpack:"data"`
 		}
-		if err := msgpack.Unmarshal(ctx.Data(), &messageData); err != nil {
+		if err := msgpack.Unmarshal(ctx.RawData(), &messageData); err != nil {
 			if secWebSocketProtocol == "" {
 				ctx.Next()
 				return
@@ -83,9 +83,12 @@ func Middleware() func(ctx *velaros.Context) {
 		if messageData.Meta != nil {
 			ctx.SetMessageMeta(messageData.Meta)
 		}
+		if messageData.Data != nil {
+			ctx.SetMessageData(messageData.Data)
+		}
 
 		ctx.SetMessageUnmarshaler(func(message *velaros.InboundMessage, into any) error {
-			return msgpack.Unmarshal(messageData.Data, into)
+			return msgpack.Unmarshal(message.Data, into)
 		})
 
 		ctx.SetMessageMarshaller(func(message *velaros.OutboundMessage) ([]byte, error) {
@@ -123,14 +126,4 @@ func Middleware() func(ctx *velaros.Context) {
 
 		ctx.Next()
 	}
-}
-
-func genFieldsField(errors []FieldError) []M {
-	var fields []M
-	for _, err := range errors {
-		field := M{}
-		field[err.Field] = err.Error
-		fields = append(fields, field)
-	}
-	return fields
 }

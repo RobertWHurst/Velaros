@@ -14,10 +14,11 @@ func CtxFree(ctx *Context) {
 	ctx.free()
 }
 
-func CtxAssociatedValues(ctx *Context) map[string]any {
-	return ctx.associatedValues
-}
-
-func CtxSocketAssociatedValues(ctx *Context) map[string]any {
-	return ctx.socket.associatedValues
+// CtxMeta returns the message meta from the context.
+// This function is for frameworks that need to access the message meta.
+func CtxMeta(ctx *Context) map[string]any {
+	if ctx.message == nil {
+		return nil
+	}
+	return ctx.message.Meta
 }

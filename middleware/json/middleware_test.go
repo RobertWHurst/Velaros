@@ -19,7 +19,7 @@ func TestJSONMiddleware_ValidMessage(t *testing.T) {
 	}
 	msgBytes, _ := json.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 
 	nextCalled := false
@@ -67,7 +67,7 @@ func TestJSONMiddleware_MissingID(t *testing.T) {
 	}
 	msgBytes, _ := json.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
@@ -90,7 +90,7 @@ func TestJSONMiddleware_MissingPath(t *testing.T) {
 	}
 	msgBytes, _ := json.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
@@ -138,7 +138,7 @@ func TestJSONMiddleware_ProtocolValidation_Valid(t *testing.T) {
 	msgData := map[string]any{"path": "/test"}
 	msgBytes, _ := json.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 
 	headers := http.Header{}
 	headers.Set("Sec-WebSocket-Protocol", "velaros-json")
@@ -158,7 +158,7 @@ func TestJSONMiddleware_ProtocolValidation_Invalid(t *testing.T) {
 	msgData := map[string]any{"path": "/test"}
 	msgBytes, _ := json.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 
 	headers := http.Header{}
 	headers.Set("Sec-WebSocket-Protocol", "wrong-protocol")
@@ -185,7 +185,7 @@ func TestJSONMiddleware_ProtocolValidation_Empty(t *testing.T) {
 	msgData := map[string]any{"path": "/test"}
 	msgBytes, _ := json.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
@@ -427,7 +427,7 @@ func TestJSONMiddleware_Meta_Incoming(t *testing.T) {
 	}
 	msgBytes, _ := json.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 
 	nextCalled := false
@@ -446,7 +446,6 @@ func TestJSONMiddleware_Meta_Incoming(t *testing.T) {
 		t.Error("expected Next() to be called")
 	}
 
-	// Test Meta method
 	userId, ok := ctx.Meta("userId")
 	if !ok {
 		t.Error("expected Meta to find userId")
@@ -484,7 +483,7 @@ func TestJSONMiddleware_Meta_MissingMeta(t *testing.T) {
 	}
 	msgBytes, _ := json.Marshal(msgData)
 
-	inboundMsg := &velaros.InboundMessage{Data: msgBytes}
+	inboundMsg := &velaros.InboundMessage{RawData: msgBytes}
 	socket := velaros.NewSocket(&velaros.ConnectionInfo{}, nil)
 	ctx := velaros.NewContext(socket, inboundMsg, func(ctx *velaros.Context) {})
 
