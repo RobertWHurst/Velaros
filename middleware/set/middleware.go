@@ -15,7 +15,7 @@ import "github.com/RobertWHurst/velaros"
 //
 //	router.Bind("/info", func(ctx *velaros.Context) {
 //	    version := ctx.MustGet("apiVersion").(string)  // "v1"
-//	    ctx.Reply(map[string]string{"version": version})
+//	    ctx.Send(map[string]string{"version": version})
 //	})
 //
 // See also: setfn.Middleware for dynamic values, setvalue.Middleware for pointer values.

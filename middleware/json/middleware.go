@@ -45,7 +45,7 @@ import (
 //	router.Bind("/users/:id", func(ctx *velaros.Context) {
 //	    var req GetUserRequest
 //	    ctx.Unmarshal(&req)  // Automatically uses JSON unmarshaling
-//	    ctx.Reply(user)      // Automatically serialized to JSON
+//	    ctx.Send(user)       // Automatically serialized to JSON
 //	})
 //
 // The middleware also validates the Sec-WebSocket-Protocol header, expecting

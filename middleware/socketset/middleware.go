@@ -15,7 +15,7 @@ import "github.com/RobertWHurst/velaros"
 //
 //	router.Bind("/info", func(ctx *velaros.Context) {
 //	    version := ctx.MustGetFromSocket("serverVersion").(string)  // "1.0.0"
-//	    ctx.Reply(map[string]string{"version": version})
+//	    ctx.Send(map[string]string{"version": version})
 //	})
 //
 // Note: For connection-specific values like user sessions, use UseOpen instead.

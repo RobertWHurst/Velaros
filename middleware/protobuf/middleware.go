@@ -39,7 +39,7 @@ import (
 //	    ctx.Unmarshal(&req)  // Works like standard protobuf
 //
 //	    user := getUser(req.UserId)
-//	    ctx.Reply(&userpb.GetUserResponse{
+//	    ctx.Send(&userpb.GetUserResponse{
 //	        Name:  user.Name,
 //	        Email: user.Email,
 //	    })
