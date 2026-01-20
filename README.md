@@ -81,7 +81,7 @@ router.Bind("/game/join", func(ctx *velaros.Context) {
     ctx.Unmarshal(&player)
     
     ctx.SetOnSocket("playerName", player.PlayerName)
-    ctx.Reply(JoinResponse{PlayerID: "p123", Status: "joined"})
+    ctx.Send(JoinResponse{PlayerID: "p123", Status: "joined"})
 })
 
 // Player performs action
@@ -92,7 +92,7 @@ router.Bind("/game/action", func(ctx *velaros.Context) {
     playerName := ctx.MustGetFromSocket("playerName").(string)
     log.Printf("%s performed action: %s", playerName, action.Type)
     
-    ctx.Reply(ActionResponse{Success: true})
+    ctx.Send(ActionResponse{Success: true})
 })
 
 // Server periodically syncs client state
@@ -164,7 +164,7 @@ Middleware does this by calling `ctx.SetMessagePath()` and `ctx.SetMessageID()`.
 
 Encoding/decoding middleware can also provide marshallers and unmarshallers by calling `ctx.SetMessageMarshaller()` and `ctx.SetMessageUnmarshaler()`. This allows handlers to unmarshal incoming message data into structs and pass structs to the context's sending methods for automatic encoding.
 
-Message IDs are required for bidirectional request/reply patterns. When a client sends a message with an ID, handlers can use `Reply()` to send a response with the same ID. When handlers use `Request()` to query the client, the server generates an ID that the client must echo back in their response for proper correlation.
+Message IDs enable multi-message conversations within a single handler. When a client sends a message with an ID, that same ID is used for all communication with that handler instance. The handler can call `Send()` to respond and `Receive()` to get subsequent messages from the client - all messages using the same ID are automatically routed to that handler.
 
 **Message Metadata** - Messages can optionally include metadata alongside the message data. Middleware can extract metadata by calling `ctx.SetMessageMeta()`, making it available through `ctx.Meta(key)`. This is useful for passing contextual information like authentication tokens, tracing IDs, request IDs, or other cross-cutting concerns that don't belong in the message data itself.
 
@@ -178,7 +178,7 @@ router.Bind("/api/data", func(ctx *velaros.Context) {
         log.Printf("Trace ID: %v", traceId)
     }
 
-    ctx.Reply(DataResponse{Items: getData()})
+    ctx.Send(DataResponse{Items: getData()})
 })
 ```
 
@@ -251,7 +251,7 @@ router.Bind("/api/data/process", func(ctx *velaros.Context) {
     user, _ := ctx.GetFromSocket("user") // Persists from auth middleware
 
     processData(user)
-    ctx.Reply(SuccessResponse{})
+    ctx.Send(SuccessResponse{})
 })
 
 // Logging middleware reads both
@@ -292,7 +292,7 @@ router.Bind("/admin/users", func(ctx *velaros.Context) {
         return
     }
     
-    ctx.Reply(AdminUsersResponse{Users: getUsers()})
+    ctx.Send(AdminUsersResponse{Users: getUsers()})
 })
 ```
 
@@ -309,7 +309,7 @@ If you spawn a goroutine or set up a callback that references the context after 
 ```go
 // ❌ This will fail - goroutine uses context after handler returns
 router.Bind("/subscribe", func(ctx *velaros.Context) {
-    ctx.Reply(SubscribeResponse{Status: "subscribed"})
+    ctx.Send(SubscribeResponse{Status: "subscribed"})
 
     go func() {
         time.Sleep(time.Second)
@@ -324,7 +324,7 @@ router.Bind("/subscribe", func(ctx *velaros.Context) {
 ```go
 // ✓ Correct - handler blocks until all operations complete
 router.Bind("/subscribe", func(ctx *velaros.Context) {
-    ctx.Reply(SubscribeResponse{Status: "subscribed"})
+    ctx.Send(SubscribeResponse{Status: "subscribed"})
 
     subscription := messageQueue.Subscribe("updates")
     defer subscription.Unsubscribe()
@@ -430,8 +430,8 @@ router.Bind("/user/create", func(ctx *velaros.Context) {
     }
 
     // Process user...
-    // Reply sends: {"id": "...", "data": {"username": "...", "email": "..."}}
-    ctx.Reply(UserData{Username: user.Username, Email: user.Email})
+    // Send responds with: {"id": "...", "data": {"username": "...", "email": "..."}}
+    ctx.Send(UserData{Username: user.Username, Email: user.Email})
 })
 ```
 
@@ -477,7 +477,7 @@ router.Bind("/users/create", func(ctx *velaros.Context) {
     }
 
     // Process user...
-    ctx.Reply(UserResponse{UserID: req.UserID, Name: req.Name})
+    ctx.Send(UserResponse{UserID: req.UserID, Name: req.Name})
 })
 ```
 
@@ -583,7 +583,7 @@ router.Bind("/users/create", func(ctx *velaros.Context) {
     }
 
     // Process user...
-    ctx.Reply(&pb.UserResponse{
+    ctx.Send(&pb.UserResponse{
         UserId:   123,
         Username: req.Username,
         Email:    req.Email,
@@ -709,7 +709,7 @@ router.Bind("/info", func(ctx *velaros.Context) {
     sessionID := ctx.GetFromSocket("sessionID").(string)
     connCount := ctx.GetFromSocket("connectionCount").(int)
     
-    ctx.Reply(InfoResponse{
+    ctx.Send(InfoResponse{
         Version:         version,
         RequestID:       requestID,
         MaxItems:        maxItems,
@@ -800,7 +800,7 @@ router.Bind("/events/**", func(ctx *velaros.Context) {
     log.Printf("Subscribed to: %s", eventPath)
     
     // Stream events to client...
-    ctx.Reply(SubscriptionResponse{Status: "subscribed", Path: eventPath})
+    ctx.Send(SubscriptionResponse{Status: "subscribed", Path: eventPath})
 })
 ```
 
@@ -847,7 +847,7 @@ router.Bind("/users/:userID/posts/:postID", func(ctx *velaros.Context) {
     userIDInt, _ := strconv.Atoi(userID)
 
     posts := getUserPosts(userIDInt, postID)
-    ctx.Reply(posts)
+    ctx.Send(posts)
 })
 
 // Client sends: {path: "/users/123/posts/456", ...}
@@ -894,7 +894,7 @@ Velaros provides methods for introspecting routes at runtime, useful for debuggi
 
 ```go
 handler := func(ctx *velaros.Context) {
-    ctx.Reply(UserData{Name: "Alice"})
+    ctx.Send(UserData{Name: "Alice"})
 }
 
 router.Bind("/users/:id", handler)
@@ -996,7 +996,7 @@ router.Bind("/logout", func(ctx *velaros.Context) {
     log.Printf("User %s logging out", username)
 
     // Send acknowledgment
-    ctx.Reply(LogoutResponse{Status: "logged out"})
+    ctx.Send(LogoutResponse{Status: "logged out"})
 
     // Close the connection with normal closure status
     ctx.Close()
@@ -1056,7 +1056,7 @@ Velaros provides constants for all standard WebSocket close status codes defined
 ```go
 // Normal logout
 router.Bind("/auth/logout", func(ctx *velaros.Context) {
-    ctx.Reply(LogoutResponse{Status: "logged out"})
+    ctx.Send(LogoutResponse{Status: "logged out"})
     ctx.CloseWithStatus(velaros.StatusNormalClosure, "User logged out")
 })
 
@@ -1125,29 +1125,95 @@ When a handler implementing `OpenHandler` or `CloseHandler` is registered via `U
 
 Unlike HTTP, WebSocket connections are bidirectional - the server can send messages to clients at any time, not just in response to requests. Velaros provides several communication patterns to leverage this capability.
 
-### Send and Reply
+### Sending Messages
 
-Use `Send()` to send a message without expecting a response, or `Reply()` to respond to a message that includes an ID:
+Use `Send()` to send messages to the client. When responding to a message that has an ID, `Send()` automatically uses that ID for the response:
 
 ```go
 router.Bind("/process", func(ctx *velaros.Context) {
     var req ProcessRequest
     ctx.Unmarshal(&req)
-    
-    // Reply immediately with acknowledgment
-    ctx.Reply(AckResponse{Status: "processing"})
-    
+
+    // Send acknowledgment immediately
+    ctx.Send(AckResponse{Status: "processing"})
+
     // Process the request
     result := performProcessing(req)
-    
+
     // Send additional message with result
     ctx.Send(ProcessComplete{Result: result})
 })
 ```
 
+### Receiving Multiple Messages
+
+Handlers can receive multiple messages from the same client by calling `Receive()` or `ReceiveInto()`. When a client sends a message with an ID, an interceptor is automatically created that routes all subsequent messages with that same ID to the handler:
+
+```go
+router.Bind("/conversation", func(ctx *velaros.Context) {
+    // Send initial greeting
+    ctx.Send(GreetingMessage{Text: "What's your name?"})
+
+    // Receive client's response (blocks until message arrives)
+    // Client must send this with the same ID from their initial message
+    var nameMsg NameMessage
+    if err := ctx.ReceiveInto(&nameMsg); err != nil {
+        return // Connection closed or timeout
+    }
+
+    // Continue conversation
+    ctx.Send(GreetingMessage{Text: "Nice to meet you, " + nameMsg.Name})
+
+    // Can receive multiple messages in a loop
+    for {
+        var msg ChatMessage
+        if err := ctx.ReceiveInto(&msg); err != nil {
+            return // Connection closed
+        }
+
+        ctx.Send(processMessage(msg))
+    }
+})
+```
+
+**Client-side example (JavaScript):**
+
+```javascript
+const ws = new WebSocket('ws://localhost:8080/ws');
+const conversationId = 'conv-123';
+
+// Initial message with ID
+ws.send(JSON.stringify({
+    id: conversationId,
+    path: '/conversation'
+}));
+
+ws.onmessage = (event) => {
+    const msg = JSON.parse(event.data);
+    console.log('Server says:', msg.data.Text);
+
+    // Send response with SAME ID for conversation to continue
+    ws.send(JSON.stringify({
+        id: conversationId,
+        data: { Name: 'Alice' }
+    }));
+};
+```
+
+**Receive Methods:**
+
+- `Receive() ([]byte, error)` - Returns raw message bytes
+- `ReceiveInto(into any) error` - Unmarshals message into provided struct
+- `ReceiveWithTimeout(timeout time.Duration) ([]byte, error)` - With custom timeout
+- `ReceiveIntoWithTimeout(into any, timeout time.Duration) error` - With custom timeout
+- `ReceiveWithContext(ctx context.Context) ([]byte, error)` - With context cancellation
+- `ReceiveIntoWithContext(ctx context.Context, into any) error` - With context cancellation
+
+**How it works:** When the client's first message with an ID arrives, Velaros automatically sets up an interceptor for that ID. All subsequent messages from the client using that same ID are intercepted and routed to the handler. The handler just calls `Receive()` or `ReceiveInto()` to get each message - the interceptor setup is completely transparent.
+
 ### Request and Response
 
-The server can initiate requests to clients and wait for responses using the `Request()` family of methods. The default timeout is 5 seconds, but can be overridden using the timeout variants:
+The server can initiate requests to clients and wait for responses. `Request()` and `RequestInto()` are convenience methods that combine sending a message and receiving the response:
 
 ```go
 type ConfirmRequest struct {
@@ -1161,18 +1227,18 @@ type ConfirmResponse struct {
 router.Bind("/delete/:id", func(ctx *velaros.Context) {
     id := ctx.Params().Get("id")
 
-    // Ask the client for confirmation
+    // Request returns raw response bytes
     response, err := ctx.Request(ConfirmRequest{
         Action: "delete item " + id,
     })
     if err != nil {
-        ctx.Send(ErrorResponse{Error: "confirmation timeout"})
+        ctx.Send(ErrorResponse{Error: "request failed"})
         return
     }
 
     // Parse the response
     var confirm ConfirmResponse
-    json.Unmarshal(response.([]byte), &confirm)
+    json.Unmarshal(response, &confirm)
 
     if confirm.Confirmed {
         deleteItem(id)
@@ -1185,7 +1251,7 @@ router.Bind("/delete/:id", func(ctx *velaros.Context) {
 
 ### Typed Requests with RequestInto
 
-For cleaner code, use `RequestInto()` which automatically unmarshals the response. Note that it has a 5 second timeout:
+For cleaner code, use `RequestInto()` which automatically unmarshals the response:
 
 ```go
 router.Bind("/delete/:id", func(ctx *velaros.Context) {
@@ -1195,7 +1261,7 @@ router.Bind("/delete/:id", func(ctx *velaros.Context) {
     if err := ctx.RequestInto(ConfirmRequest{
         Action: "delete item " + id,
     }, &confirm); err != nil {
-        ctx.Send(ErrorResponse{Error: "confirmation timeout"})
+        ctx.Send(ErrorResponse{Error: "request failed"})
         return
     }
 
@@ -1206,12 +1272,14 @@ router.Bind("/delete/:id", func(ctx *velaros.Context) {
 })
 ```
 
+**Note:** `Request()` and `RequestInto()` are simply convenience wrappers that call `Send()` followed by `Receive()` or `ReceiveInto()`. By default, they wait indefinitely for a response. Use the timeout or context variants to add timeouts.
+
 ### Request Timeouts and Cancellation
 
-To override the default timeout of 5 seconds or use a context instead, use these request methods:
+Control how long to wait for responses using timeout or context variants:
 
 ```go
-// Custom timeout
+// Custom timeout - waits up to 30 seconds for response
 var response ConfirmResponse
 err := ctx.RequestIntoWithTimeout(
     ConfirmRequest{Action: "approve"},
@@ -1219,7 +1287,7 @@ err := ctx.RequestIntoWithTimeout(
     30 * time.Second,
 )
 
-// Full context control
+// Context control - can cancel programmatically
 cancelCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 defer cancel()
 
@@ -1253,7 +1321,7 @@ router.Bind("/notifications/subscribe", func(ctx *velaros.Context) {
     userID := getUserID(ctx)
 
     // Send acknowledgment
-    ctx.Reply(SubscribeResponse{Status: "subscribed"})
+    ctx.Send(SubscribeResponse{Status: "subscribed"})
 
     // Subscribe to message queue for this user
     // This blocks and keeps the handler alive
@@ -1419,7 +1487,7 @@ router.Bind("/user/profile", func(ctx *velaros.Context) {
     }
 
     user, _ := getUser(ctx)
-    ctx.Reply(UserProfile{Email: user.Email, Name: user.Name})
+    ctx.Send(UserProfile{Email: user.Email, Name: user.Name})
 })
 ```
 
@@ -1493,7 +1561,7 @@ Velaros automatically detects the message type (text or binary) for each incomin
 router.Bind("/echo", func(ctx *velaros.Context) {
     // Response will use the same message type (text or binary)
     // that the client used for this message
-    ctx.Reply(EchoResponse{Message: "echo"})
+    ctx.Send(EchoResponse{Message: "echo"})
 })
 ```
 
@@ -1530,7 +1598,7 @@ Velaros is designed for real-time, persistent WebSocket connections where each c
 ```go
 // This handler blocks, but other messages can still be processed
 router.Bind("/notifications/subscribe", func(ctx *velaros.Context) {
-    ctx.Reply(SubscribeResponse{Status: "subscribed"})
+    ctx.Send(SubscribeResponse{Status: "subscribed"})
 
     // This blocks indefinitely, but client can still send other messages
     // which will be processed in separate goroutines
@@ -1551,7 +1619,7 @@ router.Bind("/notifications/subscribe", func(ctx *velaros.Context) {
 router.Bind("/user/profile", func(ctx *velaros.Context) {
     // Can be called while /notifications/subscribe is still running
     profile := getUserProfile(ctx)
-    ctx.Reply(profile)
+    ctx.Send(profile)
 })
 ```
 
@@ -1611,7 +1679,7 @@ func TestEchoHandler(t *testing.T) {
     router.Bind("/echo", func(ctx *velaros.Context) {
         var req EchoRequest
         ctx.Unmarshal(&req)
-        ctx.Reply(EchoResponse{Message: req.Message})
+        ctx.Send(EchoResponse{Message: req.Message})
     })
     
     // Create test server
@@ -1653,5 +1721,5 @@ MIT License - see [LICENSE](LICENSE) for details.
 ## Related Projects
 
 - [Navaros](https://github.com/RobertWHurst/Navaros) - Lightweight HTTP framework for Go with flexible message routing and middleware - shares Velaros' routing patterns and API design philosophy
-- [Zephyr](https://github.com/TelemetryTV/Zephyr) - Microservice framework built on Navaros with service discovery and fulling streaming HTTP all the way to the service.
-- Eurus - WebSocket API gateway framework (upcoming, integrates with Velaros via route descriptors)
+- [Zephyr](https://github.com/RobertWHurst/Zephyr) - Microservice framework built on Navaros with service discovery and fulling streaming HTTP all the way to the service.
+- [Eurus](https://github.com/RobertWHurst/Eurus) - WebSocket API gateway framework for Velaros-based microservices

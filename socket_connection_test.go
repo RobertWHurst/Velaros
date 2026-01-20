@@ -86,7 +86,7 @@ func TestCustomConnection_MessageMetaFlowThrough(t *testing.T) {
 			t.Errorf("expected userId=user123 in meta, got: %v", userId)
 		}
 
-		if err := ctx.Reply(map[string]string{"status": "ok"}); err != nil {
+		if err := ctx.Send(map[string]string{"status": "ok"}); err != nil {
 			t.Errorf("reply failed: %v", err)
 		}
 	})
@@ -138,7 +138,7 @@ func TestCustomConnection_SocketAssociatedValues(t *testing.T) {
 	router.Bind("/set-socket-meta", func(ctx *velaros.Context) {
 		ctx.SetOnSocket("sessionId", "session-xyz")
 		ctx.SetOnSocket("authenticated", true)
-		if err := ctx.Reply("meta set"); err != nil {
+		if err := ctx.Send("meta set"); err != nil {
 			t.Errorf("reply failed: %v", err)
 		}
 	})
@@ -154,7 +154,7 @@ func TestCustomConnection_SocketAssociatedValues(t *testing.T) {
 			t.Error("expected authenticated to be set on socket")
 			return
 		}
-		if err := ctx.Reply(map[string]any{
+		if err := ctx.Send(map[string]any{
 			"sessionId":     sessionId,
 			"authenticated": authenticated,
 		}); err != nil {
@@ -222,7 +222,7 @@ func TestWebSocketConnection_WithMetaField(t *testing.T) {
 			return
 		}
 
-		if err := ctx.Reply(map[string]any{
+		if err := ctx.Send(map[string]any{
 			"echo":      req.Message,
 			"requestId": requestId,
 		}); err != nil {

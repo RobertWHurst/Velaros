@@ -12,11 +12,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// DefaultRequestTimeout is the default timeout duration for server-initiated
-// requests to the client when using Request() or RequestInto() without explicitly
-// specifying a timeout.
-const DefaultRequestTimeout = 5 * time.Second
-
 // ErrContextFreed is returned when attempting to use a Context after its handler
 // has returned. Context objects are pooled and reused, so handlers must block
 // until all operations using the context are complete.
@@ -34,7 +29,7 @@ var ErrContextFreed = errors.New("context cannot be used after handler returns -
 // Key capabilities:
 //   - Message access: Path(), Data(), MessageID(), Params()
 //   - Storage: Set/Get for per-message storage, SetOnSocket/GetFromSocket for per-connection storage
-//   - Communication: Send(), Reply(), Request(), RequestInto()
+//   - Communication: Send(), Receive()
 //   - Control flow: Next() to continue the handler chain
 //   - Lifecycle: Close(), CloseWithStatus() to terminate the connection
 //   - Error handling: Error, ErrorStack fields for panic recovery
@@ -54,6 +49,8 @@ type Context struct {
 	currentHandlerIndex       int
 
 	currentHandler any
+
+	interceptorChan chan *InboundMessage
 
 	ctx       context.Context
 	cancelCtx context.CancelFunc
@@ -165,10 +162,24 @@ func contextFromPool() *Context {
 }
 
 func (c *Context) free() {
+	c.cancelCtx()
+
+	// Clean up interceptor before freeing message (to avoid race on message.ID)
+	if c.interceptorChan != nil {
+		if c.socket != nil && c.message != nil {
+			c.socket.RemoveInterceptor(c.message.ID)
+		}
+		// Drain and free any buffered messages
+		for len(c.interceptorChan) > 0 {
+			msg := <-c.interceptorChan
+			msg.free()
+		}
+		c.interceptorChan = nil
+	}
+
 	if c.message != nil {
 		c.message.free()
 	}
-	c.cancelCtx()
 
 	c.parentContext = nil
 
@@ -390,7 +401,7 @@ func (c *Context) SetMessageUnmarshaler(unmarshaler func(message *InboundMessage
 
 // SetMessageMarshaller sets the function used to marshal outgoing message data.
 // This is typically called by middleware (like JSON middleware) to provide a
-// serialization strategy for Send(), Reply(), and Request() methods.
+// serialization strategy for Send() and Request() methods.
 func (c *Context) SetMessageMarshaller(marshaller func(message *OutboundMessage) ([]byte, error)) {
 	c.messageMarshaller = marshaller
 }
@@ -454,46 +465,19 @@ func (c *Context) Meta(key string) (any, bool) {
 	return value, ok
 }
 
-// Send sends a message to the client without correlating it to the current
-// message. The data is marshalled using the marshaller set by middleware
-// (typically JSON middleware). Returns an error if marshalling or sending fails.
-//
-// Use Send() for notifications and events that aren't responses to a specific
-// client request. For responses to client requests, use Reply() instead.
-//
-// Example:
-//
-//	ctx.Send(NotificationMessage{Type: "user_online", UserID: "123"})
-func (c *Context) Send(data any) error {
-	if c.socket == nil {
-		return ErrContextFreed
-	}
-	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
-		Data: data,
-	})
-	if err != nil {
-		return err
-	}
-	return c.socket.Send(c.messageType, msgBuf)
-}
-
-// Reply sends a message to the client in response to the current message.
-// The reply includes the same ID as the current message, enabling the client
-// to correlate the response with their request. Returns an error if the current
-// message has no ID, or if marshalling or sending fails.
+// Send sends a message to the client. If the current message has an ID, the
+// response uses the same ID, enabling the client to correlate the response
+// with their request. If there's no ID, the message is sent without one.
 //
 // Example:
 //
 //	var req GetUserRequest
 //	ctx.Unmarshal(&req)
 //	user := getUser(req.UserID)
-//	ctx.Reply(GetUserResponse{User: user})
-func (c *Context) Reply(data any) error {
+//	ctx.Send(GetUserResponse{User: user})
+func (c *Context) Send(data any) error {
 	if c.socket == nil {
 		return ErrContextFreed
-	}
-	if c.MessageID() == "" {
-		return errors.New("cannot reply to a message without an ID")
 	}
 	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
 		ID:   c.MessageID(),
@@ -505,97 +489,70 @@ func (c *Context) Reply(data any) error {
 	return c.socket.Send(c.messageType, msgBuf)
 }
 
-// Request sends a message to the client and waits for a response. This enables
-// server-initiated request/reply patterns. The request uses a generated ID and
-// waits for a matching response from the client. Uses DefaultRequestTimeout (5s).
+// Request sends a message to the client and waits for a response, returning the raw
+// response data. This is a convenience method that combines Send() and Receive().
+// Blocks until a response arrives, the connection closes, or the context is cancelled.
 //
-// Returns the raw response data (as []byte) or an error if the request times out,
-// fails to send, or the connection closes. For automatic deserialization, use
-// RequestInto() instead.
+// Returns the raw response data and an error if sending fails, the connection closes,
+// or the context is cancelled.
 //
-// Example:
+// Example usage:
 //
-//	response, err := ctx.Request(ServerRequest{Action: "confirm"})
+//	data, err := ctx.Request(query)
 //	if err != nil {
-//	    log.Printf("Client didn't respond: %v", err)
+//	    return err
 //	}
-func (c *Context) Request(data any) (any, error) {
-	return c.RequestWithTimeout(data, DefaultRequestTimeout)
+//	process(data)
+func (c *Context) Request(data any) ([]byte, error) {
+	return c.RequestWithTimeout(data, 0) // 0 = no timeout
 }
 
 // RequestWithTimeout is like Request but allows specifying a custom timeout duration.
-func (c *Context) RequestWithTimeout(data any, timeout time.Duration) (any, error) {
-	if c.socket == nil {
-		return nil, ErrContextFreed
+// A timeout of 0 means no timeout (wait indefinitely).
+func (c *Context) RequestWithTimeout(data any, timeout time.Duration) ([]byte, error) {
+	if timeout == 0 {
+		return c.RequestWithContext(c.ctx, data)
 	}
+
 	ctx, cancel := context.WithTimeout(c.ctx, timeout)
 	defer cancel()
 	return c.RequestWithContext(ctx, data)
 }
 
 // RequestWithContext is like Request but accepts a custom context for cancellation.
-// This allows integration with Go's context patterns for request cancellation,
-// deadlines, and value propagation.
-func (c *Context) RequestWithContext(ctx context.Context, data any) (any, error) {
-	if c.socket == nil {
-		return nil, ErrContextFreed
-	}
-	id := uuid.NewString()
-
-	responseMessageChan := make(chan *InboundMessage, 1)
-	defer close(responseMessageChan)
-	c.socket.AddInterceptor(id, responseMessageChan)
-	defer c.socket.RemoveInterceptor(id)
-
-	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
-		ID:   id,
-		Data: data,
-	})
-	if err != nil {
+func (c *Context) RequestWithContext(ctx context.Context, data any) ([]byte, error) {
+	if err := c.Send(data); err != nil {
 		return nil, err
 	}
-
-	if err := c.socket.Send(c.messageType, msgBuf); err != nil {
-		return nil, err
-	}
-
-	select {
-	case responseMessage := <-responseMessageChan:
-		data := responseMessage.Data
-		responseMessage.free()
-		return data, nil
-	case <-ctx.Done():
-		return nil, fmt.Errorf("request cancelled: %w", ctx.Err())
-	}
+	return c.ReceiveWithContext(ctx)
 }
 
-// RequestInto sends a message to the client, waits for a response, and
-// unmarshals the response into the provided value. This combines Request()
-// with automatic deserialization. Uses DefaultRequestTimeout (5s).
+// RequestInto sends a message to the client and waits for a response, unmarshalling
+// the response into the provided value. This is a convenience method that combines
+// Send() and ReceiveInto().
+// Blocks until a response arrives, the connection closes, or the context is cancelled.
 //
-// Returns an error if the request times out, fails to send, the connection
-// closes, or deserialization fails.
+// Returns an error if sending fails, the connection closes, context is cancelled,
+// or unmarshalling fails.
 //
-// Example:
+// Example usage:
 //
-//	var response ConfirmationResponse
-//	err := ctx.RequestInto(ServerRequest{Action: "confirm"}, &response)
-//	if err != nil {
-//	    log.Printf("Request failed: %v", err)
-//	    return
+//	var response QueryResponse
+//	if err := ctx.RequestInto(query, &response); err != nil {
+//	    return err
 //	}
-//	if response.Confirmed {
-//	    // proceed
-//	}
+//	process(response)
 func (c *Context) RequestInto(data any, into any) error {
-	return c.RequestIntoWithTimeout(data, into, DefaultRequestTimeout)
+	return c.RequestIntoWithTimeout(data, into, 0) // 0 = no timeout
 }
 
 // RequestIntoWithTimeout is like RequestInto but allows specifying a custom timeout duration.
+// A timeout of 0 means no timeout (wait indefinitely).
 func (c *Context) RequestIntoWithTimeout(data any, into any, timeout time.Duration) error {
-	if c.socket == nil {
-		return ErrContextFreed
+	if timeout == 0 {
+		return c.RequestIntoWithContext(c.ctx, data, into)
 	}
+
 	ctx, cancel := context.WithTimeout(c.ctx, timeout)
 	defer cancel()
 	return c.RequestIntoWithContext(ctx, data, into)
@@ -603,35 +560,119 @@ func (c *Context) RequestIntoWithTimeout(data any, into any, timeout time.Durati
 
 // RequestIntoWithContext is like RequestInto but accepts a custom context for cancellation.
 func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any) error {
+	if err := c.Send(data); err != nil {
+		return err
+	}
+	return c.ReceiveIntoWithContext(ctx, into)
+}
+
+// Receive waits for the next message from the client with the context's message ID
+// and returns the raw data. Blocks until a message arrives, the connection closes,
+// or the context is cancelled.
+//
+// An interceptor is automatically set up the first time a message with an ID arrives.
+// Subsequent messages with the same ID are intercepted and queued for the handler.
+//
+// Returns the raw message data and an error if the connection closes or context is cancelled.
+//
+// Example usage:
+//
+//	ctx.Send(greeting)
+//	for {
+//	    data, err := ctx.Receive()
+//	    if err != nil {
+//	        return
+//	    }
+//	    ctx.Send(process(data))
+//	}
+func (c *Context) Receive() ([]byte, error) {
+	return c.ReceiveWithTimeout(0) // 0 = no timeout
+}
+
+// ReceiveWithTimeout is like Receive but allows specifying a custom timeout duration.
+// A timeout of 0 means no timeout (wait indefinitely).
+func (c *Context) ReceiveWithTimeout(timeout time.Duration) ([]byte, error) {
+	if timeout == 0 {
+		return c.ReceiveWithContext(c.ctx)
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, timeout)
+	defer cancel()
+	return c.ReceiveWithContext(ctx)
+}
+
+// ReceiveWithContext is like Receive but accepts a custom context for cancellation.
+func (c *Context) ReceiveWithContext(ctx context.Context) ([]byte, error) {
 	if c.socket == nil {
-		return ErrContextFreed
-	}
-	id := uuid.NewString()
-
-	responseMessageChan := make(chan *InboundMessage, 1)
-	defer close(responseMessageChan)
-	c.socket.AddInterceptor(id, responseMessageChan)
-	defer c.socket.RemoveInterceptor(id)
-
-	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
-		ID:   id,
-		Data: data,
-	})
-	if err != nil {
-		return err
+		return nil, ErrContextFreed
 	}
 
-	if err := c.socket.Send(c.messageType, msgBuf); err != nil {
-		return err
+	if c.interceptorChan == nil {
+		return nil, errors.New("no interceptor set up for this message ID")
 	}
 
 	select {
-	case responseMessage := <-responseMessageChan:
-		err := c.unmarshalInboundMessage(responseMessage, into)
-		responseMessage.free()
+	case message := <-c.interceptorChan:
+		data := message.Data
+		message.free()
+		return data, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("receive cancelled: %w", ctx.Err())
+	}
+}
+
+// ReceiveInto waits for the next message from the client with the context's message ID
+// and unmarshals it into the provided value. Blocks until a message arrives, the
+// connection closes, or the context is cancelled.
+//
+// An interceptor is automatically set up the first time a message with an ID arrives.
+// Subsequent messages with the same ID are intercepted and queued for the handler.
+//
+// Returns an error if the connection closes, context is cancelled, or unmarshalling fails.
+//
+// Example usage:
+//
+//	ctx.Send(greeting)
+//	for {
+//	    var msg UserMessage
+//	    if err := ctx.ReceiveInto(&msg); err != nil {
+//	        return
+//	    }
+//	    ctx.Send(process(msg))
+//	}
+func (c *Context) ReceiveInto(into any) error {
+	return c.ReceiveIntoWithTimeout(into, 0) // 0 = no timeout
+}
+
+// ReceiveIntoWithTimeout is like ReceiveInto but allows specifying a custom timeout duration.
+// A timeout of 0 means no timeout (wait indefinitely).
+func (c *Context) ReceiveIntoWithTimeout(into any, timeout time.Duration) error {
+	if timeout == 0 {
+		return c.ReceiveIntoWithContext(c.ctx, into)
+	}
+
+	ctx, cancel := context.WithTimeout(c.ctx, timeout)
+	defer cancel()
+	return c.ReceiveIntoWithContext(ctx, into)
+}
+
+// ReceiveIntoWithContext is like ReceiveInto but accepts a custom context for cancellation.
+func (c *Context) ReceiveIntoWithContext(ctx context.Context, into any) error {
+	if c.socket == nil {
+		return ErrContextFreed
+	}
+
+	if c.interceptorChan == nil {
+		return errors.New("no interceptor set up for this message ID")
+	}
+
+	select {
+	case message := <-c.interceptorChan:
+		err := c.unmarshalInboundMessage(message, into)
+		message.free()
 		return err
 	case <-ctx.Done():
-		return fmt.Errorf("request cancelled: %w", ctx.Err())
+		return fmt.Errorf("receive cancelled: %w", ctx.Err())
 	}
 }
 

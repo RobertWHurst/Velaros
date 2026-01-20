@@ -25,13 +25,25 @@ func (c *Context) Next() {
 		return
 	}
 
-	// if the ID was set, try socket interceptors to see if they want this
-	// message
+	// Auto-create interceptor if message has an ID. The first message with a given ID
+	// creates the interceptor, subsequent messages with the same ID get intercepted.
 	if c.message.hasSetID {
 		interceptorChan, ok := c.socket.GetInterceptor(c.message.ID)
-		if ok {
-			interceptorChan <- c.message
-			return
+		if !ok {
+			// First message with this ID - create interceptor
+			interceptorChan = make(chan *InboundMessage, 1)
+			c.interceptorChan = interceptorChan
+			c.socket.AddInterceptor(c.message.ID, interceptorChan)
+		} else if c.interceptorChan == nil {
+			// Subsequent message with this ID - intercept it (unless this context owns the interceptor)
+			select {
+			case interceptorChan <- c.message:
+				return
+			case <-c.socket.Done():
+				// Socket closed while trying to send - free message and continue
+				c.message.free()
+				return
+			}
 		}
 		c.message.hasSetID = false
 	}

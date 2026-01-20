@@ -439,3 +439,352 @@ func TestContextSetMessageData(t *testing.T) {
 		t.Errorf("expected 'data modified', got %q", response.Msg)
 	}
 }
+
+func TestContextReceive(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	router.Bind("/conversation", func(ctx *velaros.Context) {
+		// Send initial greeting
+		if err := ctx.Send(testMessage{Msg: "Hello! What's your name?"}); err != nil {
+			t.Errorf("reply failed: %v", err)
+			return
+		}
+
+		// Receive first message
+		var msg1 testMessage
+		if err := ctx.ReceiveInto(&msg1); err != nil {
+			t.Errorf("receive failed: %v", err)
+			return
+		}
+
+		// Send response
+		if err := ctx.Send(testMessage{Msg: "Nice to meet you, " + msg1.Msg}); err != nil {
+			t.Errorf("reply failed: %v", err)
+			return
+		}
+
+		// Receive second message
+		var msg2 testMessage
+		if err := ctx.ReceiveInto(&msg2); err != nil {
+			t.Errorf("receive failed: %v", err)
+			return
+		}
+
+		// Send final response
+		if err := ctx.Send(testMessage{Msg: "You said: " + msg2.Msg}); err != nil {
+			t.Errorf("reply failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	// Start conversation with an ID
+	conversationID := "conv-123"
+	writeMessage(t, conn, ctx, conversationID, "/conversation", nil)
+
+	// Read greeting
+	id1, response1 := readMessage(t, conn, ctx)
+	if id1 != conversationID {
+		t.Errorf("expected ID %q, got %q", conversationID, id1)
+	}
+	if response1.Msg != "Hello! What's your name?" {
+		t.Errorf("unexpected greeting: %q", response1.Msg)
+	}
+
+	// Send first message with same ID
+	writeMessage(t, conn, ctx, conversationID, "/conversation", testMessage{Msg: "Alice"})
+
+	// Read response
+	id2, response2 := readMessage(t, conn, ctx)
+	if id2 != conversationID {
+		t.Errorf("expected ID %q, got %q", conversationID, id2)
+	}
+	if response2.Msg != "Nice to meet you, Alice" {
+		t.Errorf("unexpected response: %q", response2.Msg)
+	}
+
+	// Send second message with same ID
+	writeMessage(t, conn, ctx, conversationID, "/conversation", testMessage{Msg: "Goodbye"})
+
+	// Read final response
+	id3, response3 := readMessage(t, conn, ctx)
+	if id3 != conversationID {
+		t.Errorf("expected ID %q, got %q", conversationID, id3)
+	}
+	if response3.Msg != "You said: Goodbye" {
+		t.Errorf("unexpected response: %q", response3.Msg)
+	}
+}
+
+func TestContextReceiveRaw(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	router.Bind("/raw-receive", func(ctx *velaros.Context) {
+		// Send initial message
+		if err := ctx.Send(testMessage{Msg: "ready"}); err != nil {
+			t.Errorf("send failed: %v", err)
+			return
+		}
+
+		// Receive raw data
+		data, err := ctx.Receive()
+		if err != nil {
+			t.Errorf("receive failed: %v", err)
+			return
+		}
+
+		// Data should be the raw JSON bytes
+		if len(data) == 0 {
+			t.Error("expected non-empty data")
+		}
+
+		// Send back the raw data
+		if err := ctx.Send(testMessage{Msg: string(data)}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	msgID := "raw-123"
+	writeMessage(t, conn, ctx, msgID, "/raw-receive", nil)
+
+	// Read ready message
+	_, response1 := readMessage(t, conn, ctx)
+	if response1.Msg != "ready" {
+		t.Errorf("expected 'ready', got %q", response1.Msg)
+	}
+
+	// Send message with raw data
+	writeMessage(t, conn, ctx, msgID, "/raw-receive", testMessage{Msg: "test data"})
+
+	// Read response with raw data echoed back
+	_, response2 := readMessage(t, conn, ctx)
+	if len(response2.Msg) == 0 {
+		t.Error("expected non-empty response")
+	}
+}
+
+func TestContextReceiveTimeout(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	router.Bind("/timeout", func(ctx *velaros.Context) {
+		var msg testMessage
+		err := ctx.ReceiveIntoWithTimeout(&msg, 100*time.Millisecond)
+		if err == nil {
+			t.Error("expected timeout error, got nil")
+		}
+
+		if err := ctx.Send(testMessage{Msg: "timed out"}); err != nil {
+			t.Errorf("reply failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	writeMessage(t, conn, ctx, "test-id", "/timeout", nil)
+
+	// Don't send follow-up message, let it timeout
+
+	_, response := readMessage(t, conn, ctx)
+	if response.Msg != "timed out" {
+		t.Errorf("expected 'timed out', got %q", response.Msg)
+	}
+}
+
+func TestContextReceiveCleanup(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	handlerComplete := make(chan bool, 1)
+
+	router.Bind("/cleanup", func(ctx *velaros.Context) {
+		// Interceptor is auto-created, but we don't call Receive
+		if err := ctx.Send(testMessage{Msg: "done"}); err != nil {
+			t.Errorf("reply failed: %v", err)
+		}
+		handlerComplete <- true
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	writeMessage(t, conn, ctx, "cleanup-id", "/cleanup", nil)
+	_, response := readMessage(t, conn, ctx)
+
+	if response.Msg != "done" {
+		t.Errorf("expected 'done', got %q", response.Msg)
+	}
+
+	// Wait for handler to complete
+	select {
+	case <-handlerComplete:
+		// Success - interceptor was cleaned up when context freed
+	case <-time.After(1 * time.Second):
+		t.Error("handler did not complete")
+	}
+
+	// Send another message with same ID - should start a NEW handler
+	writeMessage(t, conn, ctx, "cleanup-id", "/cleanup", nil)
+	_, response2 := readMessage(t, conn, ctx)
+
+	if response2.Msg != "done" {
+		t.Errorf("expected 'done', got %q", response2.Msg)
+	}
+}
+
+func TestContextRequest(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	router.Bind("/echo", func(ctx *velaros.Context) {
+		var msg testMessage
+		if err := ctx.Unmarshal(&msg); err != nil {
+			t.Errorf("unmarshal failed: %v", err)
+			return
+		}
+
+		if err := ctx.Send(testMessage{Msg: "echo: " + msg.Msg}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	router.Bind("/requester", func(ctx *velaros.Context) {
+		// Send a request and get raw response
+		data, err := ctx.Request(testMessage{Msg: "hello"})
+		if err != nil {
+			t.Errorf("request failed: %v", err)
+			return
+		}
+
+		if len(data) == 0 {
+			t.Error("expected non-empty response data")
+		}
+
+		if err := ctx.Send(testMessage{Msg: "got response"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	writeMessage(t, conn, ctx, "req-123", "/requester", nil)
+
+	// First message is the Request to /echo
+	id1, msg1 := readMessage(t, conn, ctx)
+	if id1 != "req-123" {
+		t.Errorf("expected ID %q, got %q", "req-123", id1)
+	}
+	if msg1.Msg != "hello" {
+		t.Errorf("expected 'hello', got %q", msg1.Msg)
+	}
+
+	// Send the echo response back
+	writeMessage(t, conn, ctx, id1, "/echo", testMessage{Msg: "echo: hello"})
+
+	// Read final response
+	_, response := readMessage(t, conn, ctx)
+	if response.Msg != "got response" {
+		t.Errorf("expected 'got response', got %q", response.Msg)
+	}
+}
+
+func TestContextRequestInto(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	router.Bind("/echo", func(ctx *velaros.Context) {
+		var msg testMessage
+		if err := ctx.Unmarshal(&msg); err != nil {
+			t.Errorf("unmarshal failed: %v", err)
+			return
+		}
+
+		if err := ctx.Send(testMessage{Msg: "echo: " + msg.Msg}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	router.Bind("/requester", func(ctx *velaros.Context) {
+		// Send a request and unmarshal response
+		var response testMessage
+		if err := ctx.RequestInto(testMessage{Msg: "world"}, &response); err != nil {
+			t.Errorf("request failed: %v", err)
+			return
+		}
+
+		if response.Msg != "echo: world" {
+			t.Errorf("expected 'echo: world', got %q", response.Msg)
+		}
+
+		if err := ctx.Send(testMessage{Msg: "success"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	writeMessage(t, conn, ctx, "req-456", "/requester", nil)
+
+	// First message is the Request to /echo
+	id1, msg1 := readMessage(t, conn, ctx)
+	if id1 != "req-456" {
+		t.Errorf("expected ID %q, got %q", "req-456", id1)
+	}
+	if msg1.Msg != "world" {
+		t.Errorf("expected 'world', got %q", msg1.Msg)
+	}
+
+	// Send the echo response back
+	writeMessage(t, conn, ctx, id1, "/echo", testMessage{Msg: "echo: world"})
+
+	// Read final response
+	_, response := readMessage(t, conn, ctx)
+	if response.Msg != "success" {
+		t.Errorf("expected 'success', got %q", response.Msg)
+	}
+}
+
+func TestContextRequestTimeout(t *testing.T) {
+	router, server := setupRouter()
+	defer server.Close()
+
+	router.Bind("/requester", func(ctx *velaros.Context) {
+		var response testMessage
+		err := ctx.RequestIntoWithTimeout(testMessage{Msg: "timeout test"}, &response, 100*time.Millisecond)
+		if err == nil {
+			t.Error("expected timeout error, got nil")
+		}
+
+		if err := ctx.Send(testMessage{Msg: "timed out"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	writeMessage(t, conn, ctx, "timeout-789", "/requester", nil)
+
+	// Read the request message
+	_, msg := readMessage(t, conn, ctx)
+	if msg.Msg != "timeout test" {
+		t.Errorf("expected 'timeout test', got %q", msg.Msg)
+	}
+
+	// Don't send response, let it timeout
+
+	// Read timeout message
+	_, response := readMessage(t, conn, ctx)
+	if response.Msg != "timed out" {
+		t.Errorf("expected 'timed out', got %q", response.Msg)
+	}
+}
