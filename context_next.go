@@ -33,6 +33,7 @@ func (c *Context) Next() {
 			// First message with this ID - create interceptor
 			interceptorChan = make(chan *InboundMessage, 1)
 			c.interceptorChan = interceptorChan
+			c.ownsInterceptor = true
 			c.socket.AddInterceptor(c.message.ID, interceptorChan)
 			// Don't push message yet - it will be available via c.message for now
 		} else if c.interceptorChan == nil {

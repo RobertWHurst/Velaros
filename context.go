@@ -51,6 +51,7 @@ type Context struct {
 	currentHandler any
 
 	interceptorChan  chan *InboundMessage
+	ownsInterceptor  bool
 	firstReceiveDone bool
 
 	ctx       context.Context
@@ -144,6 +145,10 @@ func NewSubContextWithNode(ctx *Context, firstHandlerNode *HandlerNode) *Context
 		subCtx.associatedValues[k] = v
 	}
 
+	subCtx.interceptorChan = ctx.interceptorChan
+	subCtx.ownsInterceptor = false // Sub-contexts never own interceptors
+	subCtx.firstReceiveDone = ctx.firstReceiveDone
+
 	subCtx.currentHandlerNode = firstHandlerNode
 
 	return subCtx
@@ -166,7 +171,8 @@ func (c *Context) free() {
 	c.cancelCtx()
 
 	// Clean up interceptor before freeing message (to avoid race on message.ID)
-	if c.interceptorChan != nil {
+	// Only clean up if this context owns the interceptor (created it)
+	if c.interceptorChan != nil && c.ownsInterceptor {
 		if c.socket != nil && c.message != nil {
 			c.socket.RemoveInterceptor(c.message.ID)
 		}
@@ -175,8 +181,9 @@ func (c *Context) free() {
 			msg := <-c.interceptorChan
 			msg.free()
 		}
-		c.interceptorChan = nil
 	}
+	c.interceptorChan = nil
+	c.ownsInterceptor = false
 
 	if c.message != nil {
 		c.message.free()
@@ -612,14 +619,17 @@ func (c *Context) ReceiveWithContext(ctx context.Context) ([]byte, error) {
 		return nil, ErrContextFreed
 	}
 
-	// First receive returns the trigger message data (works even without receiver channel)
+	// First receive: if trigger message has data, return it; otherwise skip to next message
 	if !c.firstReceiveDone {
 		c.firstReceiveDone = true
-		return c.message.Data, nil
+		if len(c.message.Data) > 0 {
+			return c.message.Data, nil
+		}
+		// Empty trigger message - fall through to receive next message
 	}
 
 	if c.interceptorChan == nil {
-		return nil, errors.New("no interceptor set up for this message ID")
+		return nil, errors.New("cannot receive subsequent messages: client must send message with an 'id' field for multi-message conversations")
 	}
 
 	select {
@@ -673,14 +683,17 @@ func (c *Context) ReceiveIntoWithContext(ctx context.Context, into any) error {
 		return ErrContextFreed
 	}
 
-	// First receive returns the trigger message data (works even without receiver channel)
+	// First receive: if trigger message has data, return it; otherwise skip to next message
 	if !c.firstReceiveDone {
 		c.firstReceiveDone = true
-		return c.unmarshalInboundMessage(c.message, into)
+		if len(c.message.Data) > 0 {
+			return c.unmarshalInboundMessage(c.message, into)
+		}
+		// Empty trigger message - fall through to receive next message
 	}
 
 	if c.interceptorChan == nil {
-		return errors.New("no interceptor set up for this message ID")
+		return errors.New("cannot receive subsequent messages: client must send message with an 'id' field for multi-message conversations")
 	}
 
 	select {
