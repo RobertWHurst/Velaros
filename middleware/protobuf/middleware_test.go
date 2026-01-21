@@ -49,7 +49,7 @@ func TestProtobufMiddleware_ValidMessage(t *testing.T) {
 	}
 
 	var result TestRequest
-	if err := ctx.Unmarshal(&result); err != nil {
+	if err := ctx.ReceiveInto(&result); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 	if result.UserId != 42 {
@@ -162,7 +162,7 @@ func TestProtobufMiddleware_NonProtoMessage(t *testing.T) {
 	}
 
 	var result map[string]any
-	if err := ctx.Unmarshal(&result); err == nil {
+	if err := ctx.ReceiveInto(&result); err == nil {
 		t.Error("expected error when unmarshaling into non-proto.Message")
 	}
 }

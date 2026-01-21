@@ -34,10 +34,12 @@ func (c *Context) Next() {
 			interceptorChan = make(chan *InboundMessage, 1)
 			c.interceptorChan = interceptorChan
 			c.socket.AddInterceptor(c.message.ID, interceptorChan)
+			// Don't push message yet - it will be available via c.message for now
 		} else if c.interceptorChan == nil {
 			// Subsequent message with this ID - intercept it (unless this context owns the interceptor)
 			select {
 			case interceptorChan <- c.message:
+				c.message = nil // Prevent double-free
 				return
 			case <-c.socket.Done():
 				// Socket closed while trying to send - free message and continue

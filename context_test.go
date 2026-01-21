@@ -445,20 +445,14 @@ func TestContextReceive(t *testing.T) {
 	defer server.Close()
 
 	router.Bind("/conversation", func(ctx *velaros.Context) {
-		// Send initial greeting
-		if err := ctx.Send(testMessage{Msg: "Hello! What's your name?"}); err != nil {
-			t.Errorf("reply failed: %v", err)
-			return
-		}
-
-		// Receive first message
+		// Receive first message (gets the name from trigger message)
 		var msg1 testMessage
 		if err := ctx.ReceiveInto(&msg1); err != nil {
 			t.Errorf("receive failed: %v", err)
 			return
 		}
 
-		// Send response
+		// Send greeting
 		if err := ctx.Send(testMessage{Msg: "Nice to meet you, " + msg1.Msg}); err != nil {
 			t.Errorf("reply failed: %v", err)
 			return
@@ -480,41 +474,29 @@ func TestContextReceive(t *testing.T) {
 	conn, ctx := dialWebSocket(t, server.URL)
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
-	// Start conversation with an ID
+	// Start conversation with name as trigger message
 	conversationID := "conv-123"
-	writeMessage(t, conn, ctx, conversationID, "/conversation", nil)
+	writeMessage(t, conn, ctx, conversationID, "/conversation", testMessage{Msg: "Alice"})
 
-	// Read greeting
+	// Read greeting response
 	id1, response1 := readMessage(t, conn, ctx)
 	if id1 != conversationID {
 		t.Errorf("expected ID %q, got %q", conversationID, id1)
 	}
-	if response1.Msg != "Hello! What's your name?" {
-		t.Errorf("unexpected greeting: %q", response1.Msg)
-	}
-
-	// Send first message with same ID
-	writeMessage(t, conn, ctx, conversationID, "/conversation", testMessage{Msg: "Alice"})
-
-	// Read response
-	id2, response2 := readMessage(t, conn, ctx)
-	if id2 != conversationID {
-		t.Errorf("expected ID %q, got %q", conversationID, id2)
-	}
-	if response2.Msg != "Nice to meet you, Alice" {
-		t.Errorf("unexpected response: %q", response2.Msg)
+	if response1.Msg != "Nice to meet you, Alice" {
+		t.Errorf("unexpected response: %q", response1.Msg)
 	}
 
 	// Send second message with same ID
 	writeMessage(t, conn, ctx, conversationID, "/conversation", testMessage{Msg: "Goodbye"})
 
 	// Read final response
-	id3, response3 := readMessage(t, conn, ctx)
-	if id3 != conversationID {
-		t.Errorf("expected ID %q, got %q", conversationID, id3)
+	id2, response2 := readMessage(t, conn, ctx)
+	if id2 != conversationID {
+		t.Errorf("expected ID %q, got %q", conversationID, id2)
 	}
-	if response3.Msg != "You said: Goodbye" {
-		t.Errorf("unexpected response: %q", response3.Msg)
+	if response2.Msg != "You said: Goodbye" {
+		t.Errorf("unexpected response: %q", response2.Msg)
 	}
 }
 
@@ -529,7 +511,14 @@ func TestContextReceiveRaw(t *testing.T) {
 			return
 		}
 
-		// Receive raw data
+		// Receive raw data from client (first Receive gets trigger message "raw-data")
+		_, err := ctx.Receive()
+		if err != nil {
+			t.Errorf("receive trigger failed: %v", err)
+			return
+		}
+
+		// Receive second message
 		data, err := ctx.Receive()
 		if err != nil {
 			t.Errorf("receive failed: %v", err)
@@ -551,7 +540,7 @@ func TestContextReceiveRaw(t *testing.T) {
 	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
 
 	msgID := "raw-123"
-	writeMessage(t, conn, ctx, msgID, "/raw-receive", nil)
+	writeMessage(t, conn, ctx, msgID, "/raw-receive", testMessage{Msg: "raw-data"})
 
 	// Read ready message
 	_, response1 := readMessage(t, conn, ctx)
@@ -645,7 +634,7 @@ func TestContextRequest(t *testing.T) {
 
 	router.Bind("/echo", func(ctx *velaros.Context) {
 		var msg testMessage
-		if err := ctx.Unmarshal(&msg); err != nil {
+		if err := ctx.ReceiveInto(&msg); err != nil {
 			t.Errorf("unmarshal failed: %v", err)
 			return
 		}
@@ -702,7 +691,7 @@ func TestContextRequestInto(t *testing.T) {
 
 	router.Bind("/echo", func(ctx *velaros.Context) {
 		var msg testMessage
-		if err := ctx.Unmarshal(&msg); err != nil {
+		if err := ctx.ReceiveInto(&msg); err != nil {
 			t.Errorf("unmarshal failed: %v", err)
 			return
 		}

@@ -2,7 +2,8 @@ package velaros
 
 import "github.com/coder/websocket"
 
-// Status represents a WebSocket close status code as defined in RFC 6455.
+// Status represents a WebSocket close status code as defined in RFC 6455. Use these
+// codes when calling CloseWithStatus to indicate the reason for closing the connection.
 type Status = websocket.StatusCode
 
 // WebSocket close status codes
@@ -24,7 +25,9 @@ const (
 	StatusTLSHandshake            Status = websocket.StatusTLSHandshake            // 1015
 )
 
-// CloseSource indicates which side initiated the connection close.
+// CloseSource indicates whether a connection close was initiated by the client or server.
+// Use CloseStatus() in UseClose handlers to check who initiated the close and respond
+// accordingly.
 type CloseSource int
 
 const (

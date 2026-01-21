@@ -44,7 +44,7 @@ import (
 //
 //	router.Bind("/users/:id", func(ctx *velaros.Context) {
 //	    var req GetUserRequest
-//	    ctx.Unmarshal(&req)  // Automatically uses MessagePack unmarshaling
+//	    ctx.ReceiveInto(&req)  // Automatically uses MessagePack unmarshaling
 //	    ctx.Send(user)       // Automatically serialized to MessagePack
 //	})
 //

@@ -12,6 +12,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// MessageType represents the type of a WebSocket message (text or binary). This is
+// a type alias for websocket.MessageType from the github.com/coder/websocket package.
 type MessageType = websocket.MessageType
 
 const (
@@ -19,6 +21,10 @@ const (
 	MessageBinary MessageType = websocket.MessageBinary
 )
 
+// SocketMessage represents a WebSocket message at the transport layer, containing
+// the message type, raw data, processed data, and metadata. This is used by
+// SocketConnection implementations to pass messages between the WebSocket layer
+// and the routing layer.
 type SocketMessage struct {
 	Type    MessageType
 	RawData []byte
@@ -26,6 +32,10 @@ type SocketMessage struct {
 	Meta    map[string]any
 }
 
+// SocketConnection is an interface for WebSocket connection implementations. This
+// allows Velaros to work with different WebSocket libraries or custom connection types.
+// The framework provides WebSocketConnection for the standard github.com/coder/websocket
+// library.
 type SocketConnection interface {
 	Read(ctx context.Context) (*SocketMessage, error)
 	Write(ctx context.Context, msg *SocketMessage) error
@@ -79,10 +89,15 @@ func NewSocket(info *ConnectionInfo, conn SocketConnection) *Socket {
 	return s
 }
 
+// ID returns the unique identifier for this socket. The ID is automatically
+// generated when the socket is created and remains constant for the connection's lifetime.
 func (s *Socket) ID() string {
 	return s.id
 }
 
+// Headers returns the HTTP headers from the initial WebSocket upgrade request.
+// These headers persist for the lifetime of the connection and are useful for
+// accessing authentication tokens, cookies, or custom headers sent during the handshake.
 func (s *Socket) Headers() http.Header {
 	if s.connectionInfo != nil && s.connectionInfo.Headers != nil {
 		return s.connectionInfo.Headers
@@ -90,6 +105,8 @@ func (s *Socket) Headers() http.Header {
 	return http.Header{}
 }
 
+// RemoteAddr returns the remote network address of the client. The format depends
+// on the underlying connection but is typically 'IP:port'.
 func (s *Socket) RemoteAddr() string {
 	if s.connectionInfo != nil {
 		return s.connectionInfo.RemoteAddr
@@ -97,6 +114,9 @@ func (s *Socket) RemoteAddr() string {
 	return ""
 }
 
+// Close marks the socket as closed with the given status code, reason, and source
+// (client or server). This is thread-safe and idempotent - subsequent calls have
+// no effect. The actual connection close happens after UseClose handlers complete.
 func (s *Socket) Close(status Status, reason string, source CloseSource) {
 	s.closeMu.Lock()
 	defer s.closeMu.Unlock()
@@ -112,12 +132,17 @@ func (s *Socket) Close(status Status, reason string, source CloseSource) {
 	s.cancelCtx()
 }
 
+// IsClosed returns true if the socket has been closed. This is thread-safe and
+// can be called from any goroutine.
 func (s *Socket) IsClosed() bool {
 	s.closeMu.Lock()
 	defer s.closeMu.Unlock()
 	return s.closed
 }
 
+// Send writes a message to the WebSocket connection with the specified message type
+// (MessageText or MessageBinary). This is a low-level method - most users should use
+// Context.Send instead.
 func (s *Socket) Send(messageType MessageType, data []byte) error {
 	return s.connection.Write(context.Background(), &SocketMessage{
 		Type: messageType,
@@ -125,12 +150,18 @@ func (s *Socket) Send(messageType MessageType, data []byte) error {
 	})
 }
 
+// Set stores a value at the socket/connection level. This is thread-safe and values
+// persist for the lifetime of the connection. Use Context.SetOnSocket instead of
+// calling this directly.
 func (s *Socket) Set(key string, value any) {
 	s.associatedValuesMx.Lock()
 	s.associatedValues[key] = value
 	s.associatedValuesMx.Unlock()
 }
 
+// Get retrieves a value stored at the socket/connection level. Returns the value
+// and true if found, or nil and false otherwise. This is thread-safe. Use
+// Context.GetFromSocket instead of calling this directly.
 func (s *Socket) Get(key string) (any, bool) {
 	s.associatedValuesMx.Lock()
 	v, ok := s.associatedValues[key]
@@ -138,6 +169,9 @@ func (s *Socket) Get(key string) (any, bool) {
 	return v, ok
 }
 
+// MustGet retrieves a value stored at the socket/connection level. Panics if the
+// key is not found. This is thread-safe. Use Context.MustGetFromSocket instead of
+// calling this directly.
 func (s *Socket) MustGet(key string) any {
 	s.associatedValuesMx.Lock()
 	v, ok := s.associatedValues[key]
@@ -148,12 +182,17 @@ func (s *Socket) MustGet(key string) any {
 	return v
 }
 
+// Delete removes a value stored at the socket/connection level. This is thread-safe.
+// Use Context.DeleteFromSocket instead of calling this directly.
 func (s *Socket) Delete(key string) {
 	s.associatedValuesMx.Lock()
 	delete(s.associatedValues, key)
 	s.associatedValuesMx.Unlock()
 }
 
+// HandleNextMessageWithNode reads the next message from the connection and processes
+// it through the handler chain starting at the given node. Returns false if the
+// connection is closed or an error occurs. This is an internal method used by the router.
 func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 	msg, err := s.connection.Read(s)
 	if err != nil {
@@ -182,18 +221,25 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 	return true
 }
 
+// HandleOpen executes the open lifecycle handlers starting at the given node.
+// This is an internal method used by the router when a new connection is established.
 func (s *Socket) HandleOpen(node *HandlerNode) {
 	openCtx := NewContextWithNode(s, inboundMessageFromPool(), node)
 	openCtx.Next()
 	openCtx.free()
 }
 
+// HandleClose executes the close lifecycle handlers starting at the given node.
+// This is an internal method used by the router when a connection is closing.
 func (s *Socket) HandleClose(node *HandlerNode) {
 	closeCtx := NewContextWithNode(s, inboundMessageFromPool(), node)
 	closeCtx.Next()
 	closeCtx.free()
 }
 
+// GetInterceptor retrieves the interceptor channel for a given message ID.
+// Interceptors are used for request/reply correlation and multi-message conversations.
+// Returns the channel and true if found. This is an internal method.
 func (s *Socket) GetInterceptor(id string) (chan *InboundMessage, bool) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
@@ -202,6 +248,9 @@ func (s *Socket) GetInterceptor(id string) (chan *InboundMessage, bool) {
 	return interceptorChan, ok
 }
 
+// AddInterceptor registers an interceptor channel for a given message ID. Messages
+// arriving with this ID will be sent to the channel instead of following normal routing.
+// This is an internal method used by the Request/Receive API.
 func (s *Socket) AddInterceptor(id string, interceptorChan chan *InboundMessage) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
@@ -209,6 +258,8 @@ func (s *Socket) AddInterceptor(id string, interceptorChan chan *InboundMessage)
 	s.interceptors[id] = interceptorChan
 }
 
+// RemoveInterceptor unregisters the interceptor channel for a given message ID.
+// This is an internal method that cleans up interceptors when contexts are freed.
 func (s *Socket) RemoveInterceptor(id string) {
 	s.interceptorsMx.Lock()
 	defer s.interceptorsMx.Unlock()
@@ -216,18 +267,27 @@ func (s *Socket) RemoveInterceptor(id string) {
 	delete(s.interceptors, id)
 }
 
+// Deadline returns the time when work done on behalf of this socket's context should
+// be canceled. Returns ok==false when no deadline is set. Part of the context.Context
+// interface.
 func (s *Socket) Deadline() (time.Time, bool) {
 	return s.ctx.Deadline()
 }
 
+// Done returns a channel that's closed when the socket's context should be canceled.
+// This closes when the connection closes. Part of the context.Context interface.
 func (s *Socket) Done() <-chan struct{} {
 	return s.ctx.Done()
 }
 
+// Err returns a non-nil error value after Done is closed. Returns Canceled if the
+// context was canceled. Part of the context.Context interface.
 func (s *Socket) Err() error {
 	return s.ctx.Err()
 }
 
+// Value returns the value associated with this socket's context for key. Part of the
+// context.Context interface.
 func (s *Socket) Value(key any) any {
 	return s.ctx.Value(key)
 }

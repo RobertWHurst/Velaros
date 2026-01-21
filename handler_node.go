@@ -20,9 +20,9 @@ const (
 // a linked list for efficient traversal during message processing.
 //
 // Each node represents either:
-//   - A message handler bound to a specific path pattern (BindTypeBind)
-//   - A connection open lifecycle handler (BindTypeBindOpen)
-//   - A connection close lifecycle handler (BindTypeBindClose)
+//   - A message handler bound to a specific path pattern (NormalBindType)
+//   - A connection open lifecycle handler (OpenBindType)
+//   - A connection close lifecycle handler (CloseBindType)
 //
 // Nodes are created automatically by the router when handlers are registered
 // via Bind(), Use(), UseOpen(), or UseClose().

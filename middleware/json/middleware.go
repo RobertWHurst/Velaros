@@ -44,7 +44,7 @@ import (
 //
 //	router.Bind("/users/:id", func(ctx *velaros.Context) {
 //	    var req GetUserRequest
-//	    ctx.Unmarshal(&req)  // Automatically uses JSON unmarshaling
+//	    ctx.ReceiveInto(&req)  // Automatically uses JSON unmarshaling
 //	    ctx.Send(user)       // Automatically serialized to JSON
 //	})
 //

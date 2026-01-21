@@ -149,7 +149,7 @@ func BenchmarkRequestReplyRoundtrip(b *testing.B) {
 
 	router.Bind("/echo", func(ctx *velaros.Context) {
 		var msg testMessage
-		if err := ctx.Unmarshal(&msg); err != nil {
+		if err := ctx.ReceiveInto(&msg); err != nil {
 			b.Errorf("unmarshal failed: %v", err)
 			return
 		}

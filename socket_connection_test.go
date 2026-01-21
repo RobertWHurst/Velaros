@@ -211,7 +211,7 @@ func TestWebSocketConnection_WithMetaField(t *testing.T) {
 		var req struct {
 			Message string `json:"message"`
 		}
-		if err := ctx.Unmarshal(&req); err != nil {
+		if err := ctx.ReceiveInto(&req); err != nil {
 			t.Errorf("unmarshal failed: %v", err)
 			return
 		}

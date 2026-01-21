@@ -50,7 +50,8 @@ type Context struct {
 
 	currentHandler any
 
-	interceptorChan chan *InboundMessage
+	interceptorChan  chan *InboundMessage
+	firstReceiveDone bool
 
 	ctx       context.Context
 	cancelCtx context.CancelFunc
@@ -206,6 +207,8 @@ func (c *Context) free() {
 		delete(c.associatedValues, k)
 	}
 
+	c.firstReceiveDone = false
+
 	contextPool.Put(c)
 }
 
@@ -260,6 +263,9 @@ func (c *Context) MustGetFromSocket(key string) any {
 	return c.socket.MustGet(key)
 }
 
+// DeleteFromSocket removes a value stored at the socket/connection level. This is
+// thread-safe and can be called from handlers processing different messages concurrently
+// on the same connection.
 func (c *Context) DeleteFromSocket(key string) {
 	if c.socket == nil {
 		return
@@ -297,7 +303,8 @@ func (c *Context) MustGet(key string) any {
 	return v
 }
 
-// Delete removes a value attached to the context with Set.
+// Delete removes a value stored at the message level with Set. Values are only
+// accessible within the same message's handler chain.
 func (c *Context) Delete(key string) {
 	delete(c.associatedValues, key)
 }
@@ -319,13 +326,15 @@ func (c *Context) MessageID() string {
 	return c.message.ID
 }
 
-// RawData returns the raw byte data of the current message.
+// RawData returns the raw byte data of the current message before any middleware
+// processing. This is the unmodified data as received from the WebSocket.
 func (c *Context) RawData() []byte {
 	return c.message.RawData
 }
 
-// Data returns the processed data of the current message. This data will have
-// been parsed or extracted by handlers and set via SetMessageData().
+// Data returns the processed data of the current message after middleware extraction.
+// Middleware may extract this from a nested 'data' field or transform RawData. For the
+// original unmodified data, use RawData().
 func (c *Context) Data() []byte {
 	return c.message.Data
 }
@@ -336,7 +345,9 @@ func (c *Context) Path() string {
 	return c.message.Path
 }
 
-// MessageType returns the WebSocket message type of the current message.
+// MessageType returns the WebSocket message type of the current message (MessageText
+// or MessageBinary). This is determined by the underlying WebSocket protocol, not the
+// message content.
 func (c *Context) MessageType() MessageType {
 	return MessageType(c.messageType)
 }
@@ -374,22 +385,6 @@ func (c *Context) RemoteAddr() string {
 // Result: Params().Get("id") returns "123"
 func (c *Context) Params() MessageParams {
 	return c.params
-}
-
-// Unmarshal deserializes the message data into the provided value. The
-// deserialization is performed by middleware (typically JSON middleware) via
-// the unmarshaler set with SetMessageUnmarshaler(). Returns an error if no
-// unmarshaler is set or if deserialization fails.
-//
-// Example:
-//
-//	var req ChatMessage
-//	if err := ctx.Unmarshal(&req); err != nil {
-//	    ctx.Send(ErrorResponse{Error: "invalid message"})
-//	    return
-//	}
-func (c *Context) Unmarshal(into any) error {
-	return c.unmarshalInboundMessage(c.message, into)
 }
 
 // SetMessageUnmarshaler sets the function used to unmarshal incoming message
@@ -472,7 +467,7 @@ func (c *Context) Meta(key string) (any, bool) {
 // Example:
 //
 //	var req GetUserRequest
-//	ctx.Unmarshal(&req)
+//	ctx.ReceiveInto(&req)
 //	user := getUser(req.UserID)
 //	ctx.Send(GetUserResponse{User: user})
 func (c *Context) Send(data any) error {
@@ -521,6 +516,11 @@ func (c *Context) RequestWithTimeout(data any, timeout time.Duration) ([]byte, e
 
 // RequestWithContext is like Request but accepts a custom context for cancellation.
 func (c *Context) RequestWithContext(ctx context.Context, data any) ([]byte, error) {
+	// If this is the first receive, skip the trigger message
+	if !c.firstReceiveDone {
+		c.firstReceiveDone = true
+	}
+
 	if err := c.Send(data); err != nil {
 		return nil, err
 	}
@@ -560,6 +560,11 @@ func (c *Context) RequestIntoWithTimeout(data any, into any, timeout time.Durati
 
 // RequestIntoWithContext is like RequestInto but accepts a custom context for cancellation.
 func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any) error {
+	// If this is the first receive, skip the trigger message
+	if !c.firstReceiveDone {
+		c.firstReceiveDone = true
+	}
+
 	if err := c.Send(data); err != nil {
 		return err
 	}
@@ -605,6 +610,12 @@ func (c *Context) ReceiveWithTimeout(timeout time.Duration) ([]byte, error) {
 func (c *Context) ReceiveWithContext(ctx context.Context) ([]byte, error) {
 	if c.socket == nil {
 		return nil, ErrContextFreed
+	}
+
+	// First receive returns the trigger message data (works even without receiver channel)
+	if !c.firstReceiveDone {
+		c.firstReceiveDone = true
+		return c.message.Data, nil
 	}
 
 	if c.interceptorChan == nil {
@@ -660,6 +671,12 @@ func (c *Context) ReceiveIntoWithTimeout(into any, timeout time.Duration) error 
 func (c *Context) ReceiveIntoWithContext(ctx context.Context, into any) error {
 	if c.socket == nil {
 		return ErrContextFreed
+	}
+
+	// First receive returns the trigger message data (works even without receiver channel)
+	if !c.firstReceiveDone {
+		c.firstReceiveDone = true
+		return c.unmarshalInboundMessage(c.message, into)
 	}
 
 	if c.interceptorChan == nil {
@@ -747,18 +764,30 @@ func (c *Context) marshallOutboundMessage(message *OutboundMessage) ([]byte, err
 	return c.messageMarshaller(message)
 }
 
+// Deadline returns the time when work done on behalf of this context should be
+// canceled. Returns ok==false when no deadline is set. Part of the context.Context
+// interface.
 func (c *Context) Deadline() (time.Time, bool) {
 	return c.ctx.Deadline()
 }
 
+// Done returns a channel that's closed when work done on behalf of this context
+// should be canceled. The channel closes when the WebSocket connection closes or
+// Close() is called. Part of the context.Context interface.
 func (c *Context) Done() <-chan struct{} {
 	return c.ctx.Done()
 }
 
+// Err returns a non-nil error value after Done is closed. Returns Canceled if the
+// context was canceled or DeadlineExceeded if the deadline passed. Part of the
+// context.Context interface.
 func (c *Context) Err() error {
 	return c.ctx.Err()
 }
 
+// Value returns the value associated with this context for key. Part of the
+// context.Context interface. For Velaros-specific storage, use Get/Set for
+// message-level storage or GetFromSocket/SetOnSocket for connection-level storage.
 func (c *Context) Value(v any) any {
 	return c.ctx.Value(v)
 }

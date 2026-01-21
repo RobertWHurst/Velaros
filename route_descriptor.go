@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 )
 
+// RouteDescriptor describes a public route registered with PublicBind. Route descriptors
+// are used by API gateway frameworks for service discovery and routing. Access them via
+// Router.RouteDescriptors().
 type RouteDescriptor struct {
 	Pattern *Pattern
 }

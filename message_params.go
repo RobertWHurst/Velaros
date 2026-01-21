@@ -8,8 +8,9 @@ import "strings"
 // is called on the context.
 type MessageParams map[string]string
 
-// Get returns the value of a given parameter key. If the key does not exist,
-// an empty string is returned.
+// Get returns the value of a parameter by key. The lookup is case-insensitive
+// (e.g., 'ID' and 'id' match the same parameter). Returns an empty string if the
+// key doesn't exist.
 func (p MessageParams) Get(key string) string {
 	for k, v := range p {
 		if strings.EqualFold(k, key) {

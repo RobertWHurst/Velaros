@@ -73,7 +73,7 @@ func TestRouterSimpleHandler(t *testing.T) {
 		var req struct {
 			Msg string `json:"msg"`
 		}
-		if err := ctx.Unmarshal(&req); err != nil {
+		if err := ctx.ReceiveInto(&req); err != nil {
 			t.Errorf("unmarshal failed: %v", err)
 			return
 		}
@@ -128,7 +128,7 @@ func TestRouterReply(t *testing.T) {
 		var req struct {
 			Msg string `json:"msg"`
 		}
-		if err := ctx.Unmarshal(&req); err != nil {
+		if err := ctx.ReceiveInto(&req); err != nil {
 			t.Errorf("unmarshal failed: %v", err)
 			return
 		}

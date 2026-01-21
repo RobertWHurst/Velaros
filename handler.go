@@ -20,15 +20,15 @@ type CloseHandler interface {
 	HandleClose(ctx *Context)
 }
 
-// HandlerFunc is a function that can be used as a handler with Velaros.
+// HandlerFunc is a function adapter that allows ordinary functions to be used as
+// handlers. This is the most common way to define handlers. For stateful handlers or
+// those needing HandleOpen/HandleClose, implement the Handler interface instead.
 type HandlerFunc func(ctx *Context)
 
-// RouterHandler is handled nearly identically to a Handler, but it also
-// provides a list of route descriptors which are collected by the router.
-// These will be merged with the other route descriptors already collected.
-// This use for situation where a handler may do more sub-routing, and the
-// allows the handler to report the sub-routes to the router, rather than
-// it's base path.
+// RouterHandler is implemented by routers to enable composition and nesting. When a
+// RouterHandler is bound as middleware, the parent router collects its route descriptors
+// for API discovery and can perform reverse routing through nested routers via Lookup.
+// This allows building modular applications with sub-routers.
 type RouterHandler interface {
 	RouteDescriptors() []*RouteDescriptor
 	Handle(ctx *Context)

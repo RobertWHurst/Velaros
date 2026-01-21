@@ -6,18 +6,20 @@ import (
 	"github.com/grafana/regexp"
 )
 
-// Pattern is used to compare and match request paths to route patterns.
-// Patterns are used by the router to determine which handlers to execute for
-// a given request.
+// Pattern represents a compiled route pattern used for matching message paths.
+// Patterns support static segments ('/users/list'), named parameters ('/users/:id'),
+// wildcards ('/files/**'), and modifiers (:id?, :tags+, :path*). Use NewPattern to
+// create patterns from strings.
 type Pattern struct {
 	str    string
 	chunks []chunk
 	regExp *regexp.Regexp
 }
 
-// NewPattern creates a new pattern from a string. The string should be a
-// valid route pattern. If the string is not a valid route pattern, an error
-// is returned.
+// NewPattern creates a pattern from a string. Supported syntax: static segments
+// ('/users'), named parameters (':id'), wildcards ('*', '**'), and modifiers
+// ('?' optional, '+' one or more, '*' zero or more). Examples: '/users/:id',
+// '/files/**', '/api/:version?/users'. Returns an error if the pattern string is invalid.
 func NewPattern(patternStr string) (*Pattern, error) {
 	chunks, err := parsePatternChunks(patternStr)
 	if err != nil {
@@ -69,28 +71,22 @@ func (p *Pattern) Path(params MessageParams, wildcards []string) (string, error)
 	path := ""
 	wildcardIndex := 0
 
-	// Build the path from chunks
 	for _, currentChunk := range p.chunks {
 		switch currentChunk.kind {
 		case static:
-			// Static segments are always included
 			path += "/" + currentChunk.pattern
 		case dynamic:
 			value, exists := params[currentChunk.key]
 
-			// Check if parameter is required
 			if !exists {
 				if currentChunk.modifier == optional || currentChunk.modifier == zeroOrMore {
-					// Optional parameter, skip this segment
 					continue
 				}
 				return "", errors.New("missing required parameter: " + currentChunk.key)
 			}
 
-			// Add the parameter value
 			path += "/" + value
 		case wildcard:
-			// Use next wildcard value from slice
 			if wildcardIndex >= len(wildcards) {
 				return "", errors.New("not enough wildcard values provided")
 			}
@@ -106,6 +102,9 @@ func (p *Pattern) Path(params MessageParams, wildcards []string) (string, error)
 	return path, nil
 }
 
+// MatchInto is like Match but reuses an existing MessageParams map instead of allocating
+// a new one. The map is cleared before populating with new parameters. Returns true if the
+// path matches the pattern. This is used internally for performance.
 func (p *Pattern) MatchInto(path string, params *MessageParams) bool {
 	matchIndices := p.regExp.FindStringSubmatchIndex(path)
 	if len(matchIndices) == 0 {

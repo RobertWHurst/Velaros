@@ -80,20 +80,24 @@ func (r *Router) ServeHTTP(res http.ResponseWriter, req *http.Request) {
 	}
 }
 
+// ConnectionInfo contains information about a WebSocket connection, including the
+// remote address and HTTP headers from the upgrade request. Used by HandleConnection
+// for custom connection implementations.
 type ConnectionInfo struct {
 	RemoteAddr string
 	Headers    http.Header
 }
 
-// HandleSocket allows creating sockets with custom connections, then driving
-// the router with the socket. This is designed for frameworks that use velaros
-// and shouldn't be used in most cases.
+// HandleConnection allows creating sockets with custom connections and driving the
+// router with them. This is designed for frameworks that provide their own WebSocket
+// implementations and need to integrate with Velaros. Most applications should use
+// ServeHTTP or Middleware instead. The info parameter provides connection metadata,
+// and connection is a SocketConnection implementation.
 func (r *Router) HandleConnection(info *ConnectionInfo, connection SocketConnection) {
 	socket := NewSocket(info, connection)
 
 	socket.HandleOpen(r.firstOpenHandlerNode)
 	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
-		// continue handling messages
 	}
 	socket.HandleClose(r.firstCloseHandlerNode)
 
@@ -308,10 +312,10 @@ func (r *Router) RouteDescriptors() []*RouteDescriptor {
 	return r.routeDescriptors
 }
 
-// Lookup finds the bound pattern for a specific handler/transformer.
-// Returns the pattern and true if found; recurses into nested routers.
-// Only searches BindTypeBind chain (WS message routing).
-// Patterns are root-relative as bound.
+// Lookup finds the pattern for a specific handler function. This is useful for
+// generating paths from handlers (reverse routing). Returns the pattern as originally
+// bound to the router (e.g., '/api/users/:id') and true if found. Recurses into nested
+// routers. Example: if pattern, ok := router.Lookup(myHandler); ok { path, _ := pattern.Path(params, nil) }
 func (r *Router) Lookup(handlerOrTransformer any) (*Pattern, bool) {
 	targetPtr := reflect.ValueOf(handlerOrTransformer).Pointer()
 
@@ -362,7 +366,6 @@ func (r *Router) bind(isPublic bool, path string, handlers ...any) {
 
 	for _, handler := range handlers {
 
-		// if this handler also implements open/close, bind those too
 		if handlerWithOpen, ok := handler.(OpenHandler); ok {
 			r.UseOpen(handlerWithOpen)
 		}
@@ -370,7 +373,6 @@ func (r *Router) bind(isPublic bool, path string, handlers ...any) {
 			r.UseClose(handlerWithClose)
 		}
 
-		// If the handler is a Router, add its route descriptors as sub-routes
 		if routerHandler, ok := handler.(RouterHandler); ok {
 
 			// routers should not be bound with PublicBind
@@ -447,7 +449,6 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 
 	socket.HandleOpen(r.firstOpenHandlerNode)
 	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
-		// continue handling messages
 	}
 	socket.HandleClose(r.firstCloseHandlerNode)
 

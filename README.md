@@ -78,8 +78,8 @@ router.Use(json.Middleware())
 // Player joins game
 router.Bind("/game/join", func(ctx *velaros.Context) {
     var player JoinRequest
-    ctx.Unmarshal(&player)
-    
+    ctx.ReceiveInto(&player)
+
     ctx.SetOnSocket("playerName", player.PlayerName)
     ctx.Send(JoinResponse{PlayerID: "p123", Status: "joined"})
 })
@@ -87,11 +87,11 @@ router.Bind("/game/join", func(ctx *velaros.Context) {
 // Player performs action
 router.Bind("/game/action", func(ctx *velaros.Context) {
     var action PlayerAction
-    ctx.Unmarshal(&action)
-    
+    ctx.ReceiveInto(&action)
+
     playerName := ctx.MustGetFromSocket("playerName").(string)
     log.Printf("%s performed action: %s", playerName, action.Type)
-    
+
     ctx.Send(ActionResponse{Success: true})
 })
 
@@ -394,7 +394,7 @@ The JSON middleware expects messages in this format:
 
 - **path** (string, required): Routes the message to the appropriate handler
 - **id** (string, optional): For request/reply correlation - include when you expect a reply
-- **data** (any, optional): The actual message payload that gets passed to `ctx.Unmarshal()`
+- **data** (any, optional): The actual message payload that gets passed to `ctx.ReceiveInto()`
 - **meta** (object, optional): Metadata for passing contextual information like auth tokens or tracing IDs
 
 Responses follow the same structure:
@@ -423,8 +423,8 @@ type UserData struct {
 
 router.Bind("/user/create", func(ctx *velaros.Context) {
     var user UserData
-    // Unmarshal extracts the "data" field from the message
-    if err := ctx.Unmarshal(&user); err != nil {
+    // ReceiveInto extracts and unmarshals the "data" field from the message
+    if err := ctx.ReceiveInto(&user); err != nil {
         ctx.Send(ErrorResponse{Error: "invalid data"})
         return
     }
@@ -471,7 +471,7 @@ type UserRequest struct {
 
 router.Bind("/users/create", func(ctx *velaros.Context) {
     var req UserRequest
-    if err := ctx.Unmarshal(&req); err != nil {
+    if err := ctx.ReceiveInto(&req); err != nil {
         ctx.Send(ErrorResponse{Error: "invalid data"})
         return
     }
@@ -577,7 +577,7 @@ router.Use(protobuf.Middleware())
 
 router.Bind("/users/create", func(ctx *velaros.Context) {
     var req pb.CreateUserRequest
-    if err := ctx.Unmarshal(&req); err != nil {
+    if err := ctx.ReceiveInto(&req); err != nil {
         ctx.Send(&pb.ErrorResponse{Error: "invalid data"})
         return
     }
@@ -597,7 +597,7 @@ The middleware uses an internal envelope to add routing metadata (`id`, `path`) 
 
 **Client-Side Usage (JavaScript):**
 
-Clients need to wrap messages in the Velaros envelope. The envelope schema is available in the [protobuf package](http://github.com/RobertWHurst/Velaros/blob/master/middleware/protobuf/envelope.proto).
+Clients need to wrap messages in the Velaros envelope. The envelope schema is available in the [protobuf package](https://github.com/RobertWHurst/Velaros/blob/master/middleware/protobuf/envelope.proto).
 
 ```javascript
 import protobuf from 'protobufjs';
@@ -1132,7 +1132,7 @@ Use `Send()` to send messages to the client. When responding to a message that h
 ```go
 router.Bind("/process", func(ctx *velaros.Context) {
     var req ProcessRequest
-    ctx.Unmarshal(&req)
+    ctx.ReceiveInto(&req)
 
     // Send acknowledgment immediately
     ctx.Send(AckResponse{Status: "processing"})
@@ -1147,15 +1147,20 @@ router.Bind("/process", func(ctx *velaros.Context) {
 
 ### Receiving Multiple Messages
 
-Handlers can receive multiple messages from the same client by calling `Receive()` or `ReceiveInto()`. When a client sends a message with an ID, an interceptor is automatically created that routes all subsequent messages with that same ID to the handler:
+Handlers can receive multiple messages from the same client by calling `Receive()` or `ReceiveInto()`. The first call to `ReceiveInto()` returns the trigger message (the message that invoked the handler). When that message includes an ID, an interceptor is automatically created so subsequent calls to `ReceiveInto()` receive additional messages from the client using that same ID:
 
 ```go
 router.Bind("/conversation", func(ctx *velaros.Context) {
-    // Send initial greeting
-    ctx.Send(GreetingMessage{Text: "What's your name?"})
+    // First ReceiveInto() gets the trigger message that invoked this handler
+    var initialMsg ConversationStart
+    if err := ctx.ReceiveInto(&initialMsg); err != nil {
+        return
+    }
 
-    // Receive client's response (blocks until message arrives)
-    // Client must send this with the same ID from their initial message
+    // Send greeting using data from trigger message
+    ctx.Send(GreetingMessage{Text: "Hello " + initialMsg.Username + "! What's your name?"})
+
+    // Now receive subsequent messages from the client
     var nameMsg NameMessage
     if err := ctx.ReceiveInto(&nameMsg); err != nil {
         return // Connection closed or timeout
@@ -1182,10 +1187,11 @@ router.Bind("/conversation", func(ctx *velaros.Context) {
 const ws = new WebSocket('ws://localhost:8080/ws');
 const conversationId = 'conv-123';
 
-// Initial message with ID
+// Initial message with ID and data
 ws.send(JSON.stringify({
     id: conversationId,
-    path: '/conversation'
+    path: '/conversation',
+    data: { Username: 'alice123' }
 }));
 
 ws.onmessage = (event) => {
@@ -1209,7 +1215,7 @@ ws.onmessage = (event) => {
 - `ReceiveWithContext(ctx context.Context) ([]byte, error)` - With context cancellation
 - `ReceiveIntoWithContext(ctx context.Context, into any) error` - With context cancellation
 
-**How it works:** When the client's first message with an ID arrives, Velaros automatically sets up an interceptor for that ID. All subsequent messages from the client using that same ID are intercepted and routed to the handler. The handler just calls `Receive()` or `ReceiveInto()` to get each message - the interceptor setup is completely transparent.
+**How it works:** The first call to `Receive()` or `ReceiveInto()` in a handler returns the trigger message (the message that invoked the handler). When that initial message includes an ID, Velaros automatically sets up an interceptor for that ID, so subsequent calls to `Receive()` or `ReceiveInto()` receive additional messages from the client using the same ID. The interceptor setup is completely transparent - you just keep calling `Receive()` or `ReceiveInto()` to get each message in sequence.
 
 ### Request and Response
 
@@ -1518,7 +1524,7 @@ router.Use(func(ctx *velaros.Context) {
 // Handlers can set errors explicitly
 router.Bind("/data/process", func(ctx *velaros.Context) {
     var data ProcessData
-    if err := ctx.Unmarshal(&data); err != nil {
+    if err := ctx.ReceiveInto(&data); err != nil {
         ctx.Error = fmt.Errorf("invalid data: %w", err)
         return
     }
@@ -1678,7 +1684,7 @@ func TestEchoHandler(t *testing.T) {
     
     router.Bind("/echo", func(ctx *velaros.Context) {
         var req EchoRequest
-        ctx.Unmarshal(&req)
+        ctx.ReceiveInto(&req)
         ctx.Send(EchoResponse{Message: req.Message})
     })
     

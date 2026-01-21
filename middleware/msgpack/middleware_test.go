@@ -49,7 +49,7 @@ func TestMessagePackMiddleware_ValidMessage(t *testing.T) {
 		UserID int64  `msgpack:"user_id"`
 		Name   string `msgpack:"name"`
 	}
-	if err := ctx.Unmarshal(&result); err != nil {
+	if err := ctx.ReceiveInto(&result); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 	if result.UserID != 42 {

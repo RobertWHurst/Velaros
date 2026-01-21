@@ -49,7 +49,7 @@ func TestJSONMiddleware_ValidMessage(t *testing.T) {
 		UserID int    `json:"user_id"`
 		Name   string `json:"name"`
 	}
-	if err := ctx.Unmarshal(&result); err != nil {
+	if err := ctx.ReceiveInto(&result); err != nil {
 		t.Fatalf("unmarshal failed: %v", err)
 	}
 	if result.UserID != 42 {

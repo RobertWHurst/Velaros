@@ -7,7 +7,7 @@
 //
 //   - Pattern-based routing with parameters and wildcards
 //   - Composable middleware for authentication, logging, and more
-//   - Bidirectional communication with Send, Reply, and Request methods
+//   - Bidirectional communication with Send, Request, and Receive methods
 //   - Context pooling for high performance
 //   - Automatic text/binary message type detection
 //   - Works with any HTTP router/framework via http.Handler interface
@@ -21,8 +21,8 @@
 //
 //	router.Bind("/chat/message", func(ctx *velaros.Context) {
 //	    var msg ChatMessage
-//	    ctx.Unmarshal(&msg)
-//	    ctx.Reply(ChatResponse{Status: "received"})
+//	    ctx.ReceiveInto(&msg)
+//	    ctx.Send(ChatResponse{Status: "received"})
 //	})
 //
 //	http.ListenAndServe(":8080", router)

@@ -36,7 +36,7 @@ import (
 //
 //	router.Bind("/users/get", func(ctx *velaros.Context) {
 //	    var req userpb.GetUserRequest
-//	    ctx.Unmarshal(&req)  // Works like standard protobuf
+//	    ctx.ReceiveInto(&req)  // Works like standard protobuf
 //
 //	    user := getUser(req.UserId)
 //	    ctx.Send(&userpb.GetUserResponse{
