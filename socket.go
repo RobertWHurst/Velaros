@@ -61,7 +61,7 @@ type Socket struct {
 	connection         SocketConnection
 	interceptorsMx     sync.Mutex
 	interceptors       map[string]chan *InboundMessage
-	associatedValuesMx sync.Mutex
+	associatedValuesMx sync.RWMutex
 	associatedValues   map[string]any
 	closeMu            sync.Mutex
 	closed             bool
@@ -163,9 +163,9 @@ func (s *Socket) Set(key string, value any) {
 // and true if found, or nil and false otherwise. This is thread-safe. Use
 // Context.GetFromSocket instead of calling this directly.
 func (s *Socket) Get(key string) (any, bool) {
-	s.associatedValuesMx.Lock()
+	s.associatedValuesMx.RLock()
 	v, ok := s.associatedValues[key]
-	s.associatedValuesMx.Unlock()
+	s.associatedValuesMx.RUnlock()
 	return v, ok
 }
 
@@ -173,9 +173,9 @@ func (s *Socket) Get(key string) (any, bool) {
 // key is not found. This is thread-safe. Use Context.MustGetFromSocket instead of
 // calling this directly.
 func (s *Socket) MustGet(key string) any {
-	s.associatedValuesMx.Lock()
+	s.associatedValuesMx.RLock()
 	v, ok := s.associatedValues[key]
-	s.associatedValuesMx.Unlock()
+	s.associatedValuesMx.RUnlock()
 	if !ok {
 		panic(fmt.Sprintf("key %s not found", key))
 	}

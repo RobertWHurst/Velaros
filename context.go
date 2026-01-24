@@ -34,8 +34,18 @@ var ErrContextFreed = errors.New("context cannot be used after handler returns -
 //   - Lifecycle: Close(), CloseWithStatus() to terminate the connection
 //   - Error handling: Error, ErrorStack fields for panic recovery
 type Context struct {
+	// mu protects all mutable fields for concurrent access. Use RLock for reads,
+	// Lock for writes. Fields marked "immutable" are set once during creation
+	// and don't need locking.
+	mu sync.RWMutex
+
+	// Immutable after creation
 	parentContext *Context
 	socket        *Socket
+	ctx           context.Context
+	cancelCtx     context.CancelFunc
+
+	// Mutable - protected by mu
 	message       *InboundMessage
 	params        MessageParams
 	messageType   websocket.MessageType
@@ -53,9 +63,6 @@ type Context struct {
 	interceptorChan  chan *InboundMessage
 	ownsInterceptor  bool
 	firstReceiveDone bool
-
-	ctx       context.Context
-	cancelCtx context.CancelFunc
 
 	// Error holds any error that occurred during handler execution, including
 	// errors from panics (automatically recovered). When Error is set, subsequent
@@ -283,27 +290,36 @@ func (c *Context) DeleteFromSocket(key string) {
 // Set stores a value at the message level. Values stored here only exist for
 // the duration of processing this specific message. This is useful for passing
 // data between middleware and handlers in the same message's handler chain.
+// This method is safe for concurrent use.
 //
 // Example:
 //
 //	ctx.Set("startTime", time.Now())
 //	ctx.Set("requestID", uuid.New())
 func (c *Context) Set(key string, value any) {
+	c.mu.Lock()
 	c.associatedValues[key] = value
+	c.mu.Unlock()
 }
 
 // Get retrieves a value stored at the message level. Returns the value and
 // true if found, or nil and false if not found. Values are only accessible
 // within the same message's handler chain.
+// This method is safe for concurrent use.
 func (c *Context) Get(key string) (any, bool) {
+	c.mu.RLock()
 	v, ok := c.associatedValues[key]
+	c.mu.RUnlock()
 	return v, ok
 }
 
 // MustGet retrieves a value stored at the message level. Panics if the key
 // is not found. Use this when the value is expected to exist.
+// This method is safe for concurrent use.
 func (c *Context) MustGet(key string) any {
+	c.mu.RLock()
 	v, ok := c.associatedValues[key]
+	c.mu.RUnlock()
 	if !ok {
 		panic("key not found")
 	}
@@ -312,8 +328,11 @@ func (c *Context) MustGet(key string) any {
 
 // Delete removes a value stored at the message level with Set. Values are only
 // accessible within the same message's handler chain.
+// This method is safe for concurrent use.
 func (c *Context) Delete(key string) {
+	c.mu.Lock()
 	delete(c.associatedValues, key)
+	c.mu.Unlock()
 }
 
 // SocketID returns the unique identifier for this WebSocket connection.
@@ -329,34 +348,54 @@ func (c *Context) SocketID() string {
 // MessageID returns the ID of the current message. Message IDs are used for
 // request/reply correlation. If the incoming message didn't have an ID, one
 // is automatically generated.
+// This method is safe for concurrent use.
 func (c *Context) MessageID() string {
-	return c.message.ID
+	c.mu.RLock()
+	id := c.message.ID
+	c.mu.RUnlock()
+	return id
 }
 
 // RawData returns the raw byte data of the current message before any middleware
 // processing. This is the unmodified data as received from the WebSocket.
+// This method is safe for concurrent use.
 func (c *Context) RawData() []byte {
-	return c.message.RawData
+	c.mu.RLock()
+	data := c.message.RawData
+	c.mu.RUnlock()
+	return data
 }
 
 // Data returns the processed data of the current message after middleware extraction.
 // Middleware may extract this from a nested 'data' field or transform RawData. For the
 // original unmodified data, use RawData().
+// This method is safe for concurrent use.
 func (c *Context) Data() []byte {
-	return c.message.Data
+	c.mu.RLock()
+	data := c.message.Data
+	c.mu.RUnlock()
+	return data
 }
 
 // Path returns the path of the current message. The path is used for routing
 // and pattern matching. Middleware can modify the path via SetMessagePath().
+// This method is safe for concurrent use.
 func (c *Context) Path() string {
-	return c.message.Path
+	c.mu.RLock()
+	path := c.message.Path
+	c.mu.RUnlock()
+	return path
 }
 
 // MessageType returns the WebSocket message type of the current message (MessageText
 // or MessageBinary). This is determined by the underlying WebSocket protocol, not the
 // message content.
+// This method is safe for concurrent use.
 func (c *Context) MessageType() MessageType {
-	return MessageType(c.messageType)
+	c.mu.RLock()
+	mt := c.messageType
+	c.mu.RUnlock()
+	return MessageType(mt)
 }
 
 // Headers returns the HTTP headers from the initial WebSocket upgrade request.
@@ -384,74 +423,104 @@ func (c *Context) RemoteAddr() string {
 	return c.socket.RemoteAddr()
 }
 
-// Params returns the parameters extracted from the message path based on the
+// Params returns a copy of the parameters extracted from the message path based on the
 // matched route pattern. Parameters are defined in patterns using :name syntax.
+// This method is safe for concurrent use.
 //
 // Example pattern: "/users/:id"
 // Example path: "/users/123"
 // Result: Params().Get("id") returns "123"
 func (c *Context) Params() MessageParams {
-	return c.params
+	c.mu.RLock()
+	// Return a copy to prevent concurrent map access
+	paramsCopy := make(MessageParams, len(c.params))
+	for k, v := range c.params {
+		paramsCopy[k] = v
+	}
+	c.mu.RUnlock()
+	return paramsCopy
 }
 
 // SetMessageUnmarshaler sets the function used to unmarshal incoming message
 // data. This is typically called by middleware (like JSON middleware) to provide
 // a deserialization strategy for the rest of the handler chain.
+// This method is safe for concurrent use.
 func (c *Context) SetMessageUnmarshaler(unmarshaler func(message *InboundMessage, into any) error) {
+	c.mu.Lock()
 	c.messageUnmarshaler = unmarshaler
+	c.mu.Unlock()
 }
 
 // SetMessageMarshaller sets the function used to marshal outgoing message data.
 // This is typically called by middleware (like JSON middleware) to provide a
 // serialization strategy for Send() and Request() methods.
+// This method is safe for concurrent use.
 func (c *Context) SetMessageMarshaller(marshaller func(message *OutboundMessage) ([]byte, error)) {
+	c.mu.Lock()
 	c.messageMarshaller = marshaller
+	c.mu.Unlock()
 }
 
 // SetMessageID changes the ID of the current message. This affects routing
 // behavior - the framework will attempt to deliver this message to any registered
 // interceptor (from Request/RequestInto calls) matching this ID.
+// This method is safe for concurrent use.
 //
 // This is primarily used by middleware to implement custom request/reply patterns.
 func (c *Context) SetMessageID(id string) {
+	c.mu.Lock()
 	c.message.ID = id
 	c.message.hasSetID = true
+	c.mu.Unlock()
 }
 
 // SetMessagePath changes the path of the current message. This affects routing
 // behavior - after the path is changed, the framework will re-evaluate route
 // patterns to find matching handlers.
+// This method is safe for concurrent use.
 //
 // This is useful for middleware that needs to rewrite or normalize paths before
 // they reach handlers.
 func (c *Context) SetMessagePath(path string) {
+	c.mu.Lock()
 	c.message.Path = path
 	c.message.hasSetPath = true
+	c.mu.Unlock()
 }
 
 // SetMessageRawData replaces the raw message data. This is useful for middleware
 // that needs to transform or filter the message payload before it reaches handlers.
+// This method is safe for concurrent use.
 func (c *Context) SetMessageRawData(rawData []byte) {
+	c.mu.Lock()
 	c.message.RawData = rawData
+	c.mu.Unlock()
 }
 
 // SetMessageData replaces the raw message data. This is useful for middleware
 // that needs to transform or filter the message payload before it reaches handlers.
+// This method is safe for concurrent use.
 func (c *Context) SetMessageData(data []byte) {
+	c.mu.Lock()
 	c.message.Data = data
+	c.mu.Unlock()
 }
 
 // SetMessageMeta sets the metadata map for the current message. Metadata can
 // be used to pass authentication tokens, tracing IDs, or other contextual
 // information alongside message data.
+// This method is safe for concurrent use.
 func (c *Context) SetMessageMeta(meta map[string]any) {
+	c.mu.Lock()
 	c.message.Meta = meta
+	c.mu.Unlock()
 }
 
 // Meta retrieves a value from the message metadata by key.
 // Returns the value and true if the key exists, or nil and false otherwise.
 // Metadata can be used to pass authentication tokens, tracing IDs, or other
 // contextual information alongside message data.
+// This method is safe for concurrent use.
 //
 // Example:
 //
@@ -460,6 +529,8 @@ func (c *Context) SetMessageMeta(meta map[string]any) {
 //	    log.Printf("Request from user: %v", userId)
 //	}
 func (c *Context) Meta(key string) (any, bool) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if c.message == nil || c.message.Meta == nil {
 		return nil, false
 	}
@@ -470,6 +541,7 @@ func (c *Context) Meta(key string) (any, bool) {
 // Send sends a message to the client. If the current message has an ID, the
 // response uses the same ID, enabling the client to correlate the response
 // with their request. If there's no ID, the message is sent without one.
+// This method is safe for concurrent use.
 //
 // Example:
 //
@@ -481,14 +553,19 @@ func (c *Context) Send(data any) error {
 	if c.socket == nil {
 		return ErrContextFreed
 	}
+	c.mu.RLock()
+	messageID := c.message.ID
+	messageType := c.messageType
+	c.mu.RUnlock()
+
 	msgBuf, err := c.marshallOutboundMessage(&OutboundMessage{
-		ID:   c.MessageID(),
+		ID:   messageID,
 		Data: data,
 	})
 	if err != nil {
 		return err
 	}
-	return c.socket.Send(c.messageType, msgBuf)
+	return c.socket.Send(messageType, msgBuf)
 }
 
 // Request sends a message to the client and waits for a response, returning the raw
@@ -524,9 +601,9 @@ func (c *Context) RequestWithTimeout(data any, timeout time.Duration) ([]byte, e
 // RequestWithContext is like Request but accepts a custom context for cancellation.
 func (c *Context) RequestWithContext(ctx context.Context, data any) ([]byte, error) {
 	// If this is the first receive, skip the trigger message
-	if !c.firstReceiveDone {
-		c.firstReceiveDone = true
-	}
+	c.mu.Lock()
+	c.firstReceiveDone = true
+	c.mu.Unlock()
 
 	if err := c.Send(data); err != nil {
 		return nil, err
@@ -568,9 +645,9 @@ func (c *Context) RequestIntoWithTimeout(data any, into any, timeout time.Durati
 // RequestIntoWithContext is like RequestInto but accepts a custom context for cancellation.
 func (c *Context) RequestIntoWithContext(ctx context.Context, data any, into any) error {
 	// If this is the first receive, skip the trigger message
-	if !c.firstReceiveDone {
-		c.firstReceiveDone = true
-	}
+	c.mu.Lock()
+	c.firstReceiveDone = true
+	c.mu.Unlock()
 
 	if err := c.Send(data); err != nil {
 		return err
@@ -620,20 +697,28 @@ func (c *Context) ReceiveWithContext(ctx context.Context) ([]byte, error) {
 	}
 
 	// First receive: if trigger message has data, return it; otherwise skip to next message
-	if !c.firstReceiveDone {
+	c.mu.Lock()
+	isFirstReceive := !c.firstReceiveDone
+	if isFirstReceive {
 		c.firstReceiveDone = true
-		if len(c.message.Data) > 0 {
-			return c.message.Data, nil
+	}
+	messageData := c.message.Data
+	interceptorChan := c.interceptorChan
+	c.mu.Unlock()
+
+	if isFirstReceive {
+		if len(messageData) > 0 {
+			return messageData, nil
 		}
 		// Empty trigger message - fall through to receive next message
 	}
 
-	if c.interceptorChan == nil {
+	if interceptorChan == nil {
 		return nil, errors.New("cannot receive subsequent messages: client must send message with an 'id' field for multi-message conversations")
 	}
 
 	select {
-	case message := <-c.interceptorChan:
+	case message := <-interceptorChan:
 		data := message.Data
 		message.free()
 		return data, nil
@@ -684,20 +769,28 @@ func (c *Context) ReceiveIntoWithContext(ctx context.Context, into any) error {
 	}
 
 	// First receive: if trigger message has data, return it; otherwise skip to next message
-	if !c.firstReceiveDone {
+	c.mu.Lock()
+	isFirstReceive := !c.firstReceiveDone
+	if isFirstReceive {
 		c.firstReceiveDone = true
-		if len(c.message.Data) > 0 {
-			return c.unmarshalInboundMessage(c.message, into)
+	}
+	message := c.message
+	interceptorChan := c.interceptorChan
+	c.mu.Unlock()
+
+	if isFirstReceive {
+		if len(message.Data) > 0 {
+			return c.unmarshalInboundMessage(message, into)
 		}
 		// Empty trigger message - fall through to receive next message
 	}
 
-	if c.interceptorChan == nil {
+	if interceptorChan == nil {
 		return errors.New("cannot receive subsequent messages: client must send message with an 'id' field for multi-message conversations")
 	}
 
 	select {
-	case message := <-c.interceptorChan:
+	case message := <-interceptorChan:
 		err := c.unmarshalInboundMessage(message, into)
 		message.free()
 		return err
@@ -764,17 +857,23 @@ func (c *Context) CloseStatus() (Status, string, CloseSource) {
 }
 
 func (c *Context) unmarshalInboundMessage(message *InboundMessage, into any) error {
-	if c.messageUnmarshaler == nil {
+	c.mu.RLock()
+	unmarshaler := c.messageUnmarshaler
+	c.mu.RUnlock()
+	if unmarshaler == nil {
 		return errors.New("no message unmarshaller set. use SetMessageUnmarshaler or add message parser middleware")
 	}
-	return c.messageUnmarshaler(message, into)
+	return unmarshaler(message, into)
 }
 
 func (c *Context) marshallOutboundMessage(message *OutboundMessage) ([]byte, error) {
-	if c.messageMarshaller == nil {
+	c.mu.RLock()
+	marshaller := c.messageMarshaller
+	c.mu.RUnlock()
+	if marshaller == nil {
 		return nil, errors.New("no message marshaller set. use SetMessageMarshaller() or add data encoder middleware")
 	}
-	return c.messageMarshaller(message)
+	return marshaller(message)
 }
 
 // Deadline returns the time when work done on behalf of this context should be
