@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -202,6 +204,10 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 			return false
 		}
 		if errors.Is(err, context.Canceled) {
+			return false
+		}
+		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+			s.Close(StatusGoingAway, "", ClientCloseSource)
 			return false
 		}
 		panic(fmt.Errorf("error reading socket message: %w", err))

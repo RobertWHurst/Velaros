@@ -3,6 +3,7 @@ package velaros_test
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http/httptest"
 	"sync"
 	"testing"
@@ -274,5 +275,65 @@ func TestWebSocketConnection_WithMetaField(t *testing.T) {
 	}
 	if requestId, ok := data["requestId"].(string); !ok || requestId != "req-123" {
 		t.Errorf("expected requestId=req-123, got: %v", data["requestId"])
+	}
+}
+
+// eofConnection is a mock that returns io.EOF on Read to simulate abrupt disconnect.
+type eofConnection struct {
+	readErr error
+	closed  bool
+	mu      sync.Mutex
+}
+
+func (c *eofConnection) Read(ctx context.Context) (*velaros.SocketMessage, error) {
+	return nil, c.readErr
+}
+
+func (c *eofConnection) Write(ctx context.Context, msg *velaros.SocketMessage) error {
+	return nil
+}
+
+func (c *eofConnection) Close(status velaros.Status, reason string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.closed = true
+	return nil
+}
+
+func TestHandleNextMessageWithNode_EOF_DoesNotPanic(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+	router.Bind("/test", func(ctx *velaros.Context) {})
+
+	tests := []struct {
+		name string
+		err  error
+	}{
+		{"io.EOF", io.EOF},
+		{"io.ErrUnexpectedEOF", io.ErrUnexpectedEOF},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			conn := &eofConnection{readErr: tt.err}
+
+			done := make(chan struct{})
+			go func() {
+				defer func() {
+					if r := recover(); r != nil {
+						t.Errorf("HandleConnection panicked on %s: %v", tt.name, r)
+					}
+					close(done)
+				}()
+				router.HandleConnection(nil, conn)
+			}()
+
+			select {
+			case <-done:
+				// success - no panic
+			case <-time.After(2 * time.Second):
+				t.Fatal("timeout waiting for HandleConnection to return")
+			}
+		})
 	}
 }
