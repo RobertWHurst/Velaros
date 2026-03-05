@@ -100,6 +100,7 @@ func (r *Router) HandleConnection(info *ConnectionInfo, connection SocketConnect
 	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
 	}
 	socket.HandleClose(r.firstCloseHandlerNode)
+	socket.cancelCtx()
 
 	socket.closeMu.Lock()
 	defer socket.closeMu.Unlock()
@@ -451,6 +452,7 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
 	}
 	socket.HandleClose(r.firstCloseHandlerNode)
+	socket.cancelCtx()
 
 	socket.closeMu.Lock()
 	defer socket.closeMu.Unlock()

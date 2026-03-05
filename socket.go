@@ -202,6 +202,7 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 			return false
 		}
 		if errors.Is(err, context.Canceled) {
+			s.Close(StatusGoingAway, "", ServerCloseSource)
 			return false
 		}
 		panic(fmt.Errorf("error reading socket message: %w", err))
