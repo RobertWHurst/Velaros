@@ -99,7 +99,9 @@ func (r *Router) HandleConnection(info *ConnectionInfo, connection SocketConnect
 	socket.HandleOpen(r.firstOpenHandlerNode)
 	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
 	}
+	socket.WaitForMessages()
 	socket.HandleClose(r.firstCloseHandlerNode)
+	socket.cancelCtx()
 
 	socket.closeMu.Lock()
 	defer socket.closeMu.Unlock()
@@ -113,8 +115,9 @@ func (r *Router) HandleConnection(info *ConnectionInfo, connection SocketConnect
 func (r *Router) Handle(ctx *Context) {
 	subCtx := NewSubContextWithNode(ctx, r.firstHandlerNode)
 	subCtx.Next()
+	hasMoreHandlers := subCtx.currentHandlerNode != nil
 	subCtx.free()
-	if subCtx.currentHandlerNode != nil {
+	if hasMoreHandlers {
 		ctx.Next()
 	}
 }
@@ -125,8 +128,9 @@ func (r *Router) Handle(ctx *Context) {
 func (r *Router) HandleOpen(ctx *Context) {
 	subCtx := NewSubContextWithNode(ctx, r.firstOpenHandlerNode)
 	subCtx.Next()
+	hasMoreHandlers := subCtx.currentHandlerNode != nil
 	subCtx.free()
-	if subCtx.currentHandlerNode != nil {
+	if hasMoreHandlers {
 		ctx.Next()
 	}
 }
@@ -137,8 +141,9 @@ func (r *Router) HandleOpen(ctx *Context) {
 func (r *Router) HandleClose(ctx *Context) {
 	subCtx := NewSubContextWithNode(ctx, r.firstCloseHandlerNode)
 	subCtx.Next()
+	hasMoreHandlers := subCtx.currentHandlerNode != nil
 	subCtx.free()
-	if subCtx.currentHandlerNode != nil {
+	if hasMoreHandlers {
 		ctx.Next()
 	}
 }
@@ -450,7 +455,9 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	socket.HandleOpen(r.firstOpenHandlerNode)
 	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
 	}
+	socket.WaitForMessages()
 	socket.HandleClose(r.firstCloseHandlerNode)
+	socket.cancelCtx()
 
 	socket.closeMu.Lock()
 	defer socket.closeMu.Unlock()

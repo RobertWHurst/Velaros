@@ -72,6 +72,7 @@ type Socket struct {
 	closeReason        string
 	ctx                context.Context
 	cancelCtx          context.CancelFunc
+	msgWg              sync.WaitGroup // tracks in-flight message handler goroutines
 }
 
 var _ context.Context = &Socket{}
@@ -204,6 +205,7 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 			return false
 		}
 		if errors.Is(err, context.Canceled) {
+			s.Close(StatusGoingAway, "", ServerCloseSource)
 			return false
 		}
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
@@ -213,7 +215,9 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 		panic(fmt.Errorf("error reading socket message: %w", err))
 	}
 
+	s.msgWg.Add(1)
 	go func() {
+		defer s.msgWg.Done()
 		inboundMsg := inboundMessageFromPool()
 		inboundMsg.RawData = msg.RawData
 		inboundMsg.Data = msg.Data
@@ -233,6 +237,13 @@ func (s *Socket) HandleOpen(node *HandlerNode) {
 	openCtx := NewContextWithNode(s, inboundMessageFromPool(), node)
 	openCtx.Next()
 	openCtx.free()
+}
+
+// WaitForMessages blocks until all in-flight message handler goroutines have
+// completed. This must be called before HandleClose to avoid data races on
+// pooled Context objects.
+func (s *Socket) WaitForMessages() {
+	s.msgWg.Wait()
 }
 
 // HandleClose executes the close lifecycle handlers starting at the given node.
