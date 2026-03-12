@@ -300,17 +300,19 @@ func (c *eofConnection) Close(status velaros.Status, reason string) error {
 	return nil
 }
 
-func TestHandleNextMessageWithNode_EOF_DoesNotPanic(t *testing.T) {
+func TestHandleNextMessageWithNode_ReadError_DoesNotPanic(t *testing.T) {
 	router := velaros.NewRouter()
 	router.Use(jsonMiddleware.Middleware())
 	router.Bind("/test", func(ctx *velaros.Context) {})
 
 	tests := []struct {
-		name string
-		err  error
+		name         string
+		err          error
+		expectClosed bool
 	}{
-		{"io.EOF", io.EOF},
-		{"io.ErrUnexpectedEOF", io.ErrUnexpectedEOF},
+		{"io.EOF", io.EOF, true},
+		{"io.ErrUnexpectedEOF", io.ErrUnexpectedEOF, true},
+		{"context.Canceled", context.Canceled, true},
 	}
 
 	for _, tt := range tests {
@@ -333,6 +335,15 @@ func TestHandleNextMessageWithNode_EOF_DoesNotPanic(t *testing.T) {
 				// success - no panic
 			case <-time.After(2 * time.Second):
 				t.Fatal("timeout waiting for HandleConnection to return")
+			}
+
+			if tt.expectClosed {
+				conn.mu.Lock()
+				closed := conn.closed
+				conn.mu.Unlock()
+				if !closed {
+					t.Errorf("expected connection to be closed for %s", tt.name)
+				}
 			}
 		})
 	}

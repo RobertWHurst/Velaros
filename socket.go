@@ -146,7 +146,13 @@ func (s *Socket) IsClosed() bool {
 // (MessageText or MessageBinary). This is a low-level method - most users should use
 // Context.Send instead.
 func (s *Socket) Send(messageType MessageType, data []byte) error {
-	return s.connection.Write(context.Background(), &SocketMessage{
+	return s.SendWithContext(context.Background(), messageType, data)
+}
+
+// SendWithContext writes a message to the WebSocket connection with the specified
+// message type, using the provided context for cancellation and deadlines.
+func (s *Socket) SendWithContext(ctx context.Context, messageType MessageType, data []byte) error {
+	return s.connection.Write(ctx, &SocketMessage{
 		Type: messageType,
 		Data: data,
 	})
@@ -204,6 +210,7 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 			return false
 		}
 		if errors.Is(err, context.Canceled) {
+			s.Close(StatusGoingAway, "", ServerCloseSource)
 			return false
 		}
 		if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
