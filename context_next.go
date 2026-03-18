@@ -109,6 +109,7 @@ func (c *Context) Next() {
 	// If we didn't find a handler function and we have reached
 	// the end of the chain, we can return early.
 	if c.currentHandler == nil {
+		c.nextBeyondEnd = true
 		return
 	}
 

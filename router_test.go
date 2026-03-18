@@ -1014,6 +1014,82 @@ func TestOpenHandlerExplicitNextForPostProcessing(t *testing.T) {
 	}
 }
 
+func Test_Router_SubRouterHandlerCallingNextPropagatesToParent(t *testing.T) {
+	subRouter := velaros.NewRouter()
+	subRouter.Use(jsonMiddleware.Middleware())
+	subRouter.Bind("/test", func(ctx *velaros.Context) {
+		ctx.Set("sub", "handled")
+		ctx.Next()
+	})
+
+	parentRouter := velaros.NewRouter()
+	parentRouter.Use(jsonMiddleware.Middleware())
+
+	parentHandlerCalled := false
+	parentRouter.Use(subRouter)
+	parentRouter.Bind("/test", func(ctx *velaros.Context) {
+		parentHandlerCalled = true
+		val, ok := ctx.Get("sub")
+		if !ok || val != "handled" {
+			t.Error("expected sub-router to have set 'sub' value")
+		}
+		if err := ctx.Send(testMessage{Msg: "handled by parent"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	server := httptest.NewServer(parentRouter)
+	defer server.Close()
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	writeMessage(t, conn, ctx, "", "/test", nil)
+	_, response := readMessage(t, conn, ctx)
+
+	if response.Msg != "handled by parent" {
+		t.Errorf("expected 'handled by parent', got %q", response.Msg)
+	}
+	if !parentHandlerCalled {
+		t.Error("expected parent handler to be called when sub-router handler calls next")
+	}
+}
+
+func Test_Router_SubRouterHandlerNotCallingNextDoesNotPropagateToParent(t *testing.T) {
+	subRouter := velaros.NewRouter()
+	subRouter.Use(jsonMiddleware.Middleware())
+	subRouter.Bind("/test", func(ctx *velaros.Context) {
+		if err := ctx.Send(testMessage{Msg: "handled by sub-router"}); err != nil {
+			t.Errorf("send failed: %v", err)
+		}
+	})
+
+	parentRouter := velaros.NewRouter()
+	parentRouter.Use(jsonMiddleware.Middleware())
+
+	parentHandlerCalled := false
+	parentRouter.Use(subRouter)
+	parentRouter.Bind("/test", func(ctx *velaros.Context) {
+		parentHandlerCalled = true
+	})
+
+	server := httptest.NewServer(parentRouter)
+	defer server.Close()
+
+	conn, ctx := dialWebSocket(t, server.URL)
+	defer func() { _ = conn.Close(websocket.StatusNormalClosure, "") }()
+
+	writeMessage(t, conn, ctx, "", "/test", nil)
+	_, response := readMessage(t, conn, ctx)
+
+	if response.Msg != "handled by sub-router" {
+		t.Errorf("expected 'handled by sub-router', got %q", response.Msg)
+	}
+	if parentHandlerCalled {
+		t.Error("expected parent handler not to be called when sub-router handler does not call next")
+	}
+}
+
 func TestOpenHandlerStopsOnClosedSocket(t *testing.T) {
 	router := velaros.NewRouter()
 	router.Use(jsonMiddleware.Middleware())

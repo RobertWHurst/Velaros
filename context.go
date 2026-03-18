@@ -58,7 +58,8 @@ type Context struct {
 	associatedValues          map[string]any
 	currentHandlerIndex       int
 
-	currentHandler any
+	currentHandler  any
+	nextBeyondEnd   bool
 
 	interceptorChan  chan *InboundMessage
 	ownsInterceptor  bool
@@ -216,6 +217,7 @@ func (c *Context) free() {
 	c.currentHandlerNodeMatches = false
 	c.currentHandlerIndex = 0
 	c.currentHandler = nil
+	c.nextBeyondEnd = false
 
 	for k := range c.associatedValues {
 		delete(c.associatedValues, k)
