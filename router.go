@@ -26,6 +26,7 @@ type Router struct {
 	firstCloseHandlerNode *HandlerNode
 	lastCloseHandlerNode  *HandlerNode
 	origins               []string
+	maxReadMessageSize    int64
 }
 
 var _ http.Handler = &Router{}
@@ -36,6 +37,14 @@ var _ CloseHandler = &Router{}
 // NewRouter creates and returns a new WebSocket router.
 func NewRouter() *Router {
 	return &Router{}
+}
+
+// SetMaxReadMessageSize configures the maximum size of a single incoming
+// WebSocket message in bytes. Messages exceeding this limit cause the
+// connection to be closed with status 1009 (Message Too Big). If not set,
+// the coder/websocket library default of 32768 bytes is used.
+func (r *Router) SetMaxReadMessageSize(n int64) {
+	r.maxReadMessageSize = n
 }
 
 // SetOrigins configures the allowed origin patterns for WebSocket connections.
@@ -442,6 +451,9 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 	if err != nil {
 		_ = conn.Close(websocket.StatusInternalError, "failed to accept websocket connection")
 		panic(err)
+	}
+	if r.maxReadMessageSize > 0 {
+		conn.SetReadLimit(r.maxReadMessageSize)
 	}
 
 	info := &ConnectionInfo{
