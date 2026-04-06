@@ -1,10 +1,14 @@
 package velaros_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http/httptest"
+	"runtime/pprof"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -30,7 +34,10 @@ func newMockConnection() *mockConnection {
 
 func (m *mockConnection) Read(ctx context.Context) (*velaros.SocketMessage, error) {
 	select {
-	case msg := <-m.incomingMessages:
+	case msg, ok := <-m.incomingMessages:
+		if !ok {
+			return nil, io.EOF
+		}
 		return msg, nil
 	case <-ctx.Done():
 		return nil, ctx.Err()
@@ -54,6 +61,9 @@ func (m *mockConnection) Write(ctx context.Context, msg *velaros.SocketMessage) 
 func (m *mockConnection) Close(status velaros.Status, reason string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.closed {
+		return nil
+	}
 	m.closed = true
 	close(m.incomingMessages)
 	return nil
@@ -201,6 +211,87 @@ func TestCustomConnection_SocketAssociatedValues(t *testing.T) {
 	}
 	if authenticated, ok := data["authenticated"].(bool); !ok || !authenticated {
 		t.Errorf("expected authenticated=true, got: %v", data["authenticated"])
+	}
+}
+
+func TestCustomConnection_RepeatedConversationIDsAccumulateReceiveWaitersOnSingleSocket(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+
+	const conversations = 25
+
+	started := make(chan string, conversations)
+	exited := make(chan string, conversations)
+
+	router.Bind("/conversation", func(ctx *velaros.Context) {
+		defer func() { exited <- ctx.MessageID() }()
+
+		var first testMessage
+		if err := ctx.ReceiveInto(&first); err != nil {
+			t.Errorf("initial receive failed: %v", err)
+			return
+		}
+
+		started <- ctx.MessageID()
+
+		var next testMessage
+		_ = ctx.ReceiveInto(&next)
+	})
+
+	mockConn := newMockConnection()
+	go router.HandleConnection(nil, mockConn)
+
+	for i := 0; i < conversations; i++ {
+		rawData, err := json.Marshal(map[string]any{
+			"id":   "conv-" + string(rune('A'+i)),
+			"path": "/conversation",
+			"data": map[string]string{"msg": "hello"},
+		})
+		if err != nil {
+			t.Fatalf("failed to marshal message: %v", err)
+		}
+
+		mockConn.sendIncoming(&velaros.SocketMessage{
+			Type:    velaros.MessageText,
+			RawData: rawData,
+		})
+	}
+
+	seen := map[string]struct{}{}
+	for i := 0; i < conversations; i++ {
+		select {
+		case id := <-started:
+			seen[id] = struct{}{}
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for conversation %d to start", i)
+		}
+	}
+
+	if len(seen) != conversations {
+		t.Fatalf("expected %d concurrent conversations on one socket, got %d", conversations, len(seen))
+	}
+
+	var goroutines bytes.Buffer
+	if err := pprof.Lookup("goroutine").WriteTo(&goroutines, 1); err != nil {
+		t.Fatalf("failed to capture goroutine profile: %v", err)
+	}
+
+	profile := goroutines.String()
+	expectedGroup := fmt.Sprintf("%d @", conversations)
+	if !strings.Contains(profile, expectedGroup) || !strings.Contains(profile, "github.com/RobertWHurst/velaros.(*Context).ReceiveIntoWithContext") {
+		t.Fatalf("expected grouped goroutine profile to contain %q waiting in ReceiveIntoWithContext\nprofile:\n%s", expectedGroup, profile)
+	}
+
+	if err := mockConn.Close(velaros.StatusNormalClosure, "done"); err != nil {
+		t.Fatalf("failed to close mock connection: %v", err)
+	}
+
+	for i := 0; i < conversations; i++ {
+		select {
+		case <-exited:
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for blocked conversation %d to exit after socket close", i)
+		}
 	}
 }
 

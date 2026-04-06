@@ -171,76 +171,6 @@ var contextPool = sync.Pool{
 	},
 }
 
-func contextFromPool() *Context {
-	return contextPool.Get().(*Context)
-}
-
-func (c *Context) free() {
-	c.cancelCtx()
-
-	// Clean up interceptor before freeing message (to avoid race on message.ID)
-	// Only clean up if this context owns the interceptor (created it)
-	if c.interceptorChan != nil && c.ownsInterceptor {
-		if c.socket != nil && c.message != nil {
-			c.socket.RemoveInterceptor(c.message.ID)
-		}
-		// Drain and free any buffered messages
-		for len(c.interceptorChan) > 0 {
-			msg := <-c.interceptorChan
-			msg.free()
-		}
-	}
-	c.interceptorChan = nil
-	c.ownsInterceptor = false
-
-	if c.message != nil {
-		c.message.free()
-	}
-
-	c.parentContext = nil
-
-	c.socket = nil
-	c.message = nil
-	c.messageType = 0
-
-	for k := range c.params {
-		delete(c.params, k)
-	}
-
-	c.Error = nil
-	c.ErrorStack = ""
-
-	c.messageUnmarshaler = nil
-	c.messageMarshaller = nil
-
-	c.currentHandlerNode = nil
-	c.currentHandlerNodeMatches = false
-	c.currentHandlerIndex = 0
-	c.currentHandler = nil
-	c.nextBeyondEnd = false
-
-	for k := range c.associatedValues {
-		delete(c.associatedValues, k)
-	}
-
-	c.firstReceiveDone = false
-
-	contextPool.Put(c)
-}
-
-func (c *Context) tryUpdateParent() {
-	if c.parentContext == nil {
-		return
-	}
-
-	c.parentContext.Error = c.Error
-	c.parentContext.ErrorStack = c.ErrorStack
-
-	for k, v := range c.associatedValues {
-		c.parentContext.associatedValues[k] = v
-	}
-}
-
 // SetOnSocket stores a value at the socket/connection level. Values stored
 // here persist across all messages for the duration of the WebSocket connection.
 // This is thread-safe and can be called from handlers processing different messages
@@ -697,36 +627,14 @@ func (c *Context) ReceiveWithContext(ctx context.Context) ([]byte, error) {
 	if c.socket == nil {
 		return nil, ErrContextFreed
 	}
-
-	// First receive: if trigger message has data, return it; otherwise skip to next message
-	c.mu.Lock()
-	isFirstReceive := !c.firstReceiveDone
-	if isFirstReceive {
-		c.firstReceiveDone = true
+	msg, owned, err := c.receiveNextMessage(ctx)
+	if err != nil {
+		return nil, err
 	}
-	messageData := c.message.Data
-	interceptorChan := c.interceptorChan
-	c.mu.Unlock()
-
-	if isFirstReceive {
-		if len(messageData) > 0 {
-			return messageData, nil
-		}
-		// Empty trigger message - fall through to receive next message
+	if owned {
+		defer msg.free()
 	}
-
-	if interceptorChan == nil {
-		return nil, errors.New("cannot receive subsequent messages: client must send message with an 'id' field for multi-message conversations")
-	}
-
-	select {
-	case message := <-interceptorChan:
-		data := message.Data
-		message.free()
-		return data, nil
-	case <-ctx.Done():
-		return nil, fmt.Errorf("receive cancelled: %w", ctx.Err())
-	}
+	return msg.Data, nil
 }
 
 // ReceiveInto waits for the next message from the client with the context's message ID
@@ -770,35 +678,14 @@ func (c *Context) ReceiveIntoWithContext(ctx context.Context, into any) error {
 		return ErrContextFreed
 	}
 
-	// First receive: if trigger message has data, return it; otherwise skip to next message
-	c.mu.Lock()
-	isFirstReceive := !c.firstReceiveDone
-	if isFirstReceive {
-		c.firstReceiveDone = true
-	}
-	message := c.message
-	interceptorChan := c.interceptorChan
-	c.mu.Unlock()
-
-	if isFirstReceive {
-		if len(message.Data) > 0 {
-			return c.unmarshalInboundMessage(message, into)
-		}
-		// Empty trigger message - fall through to receive next message
-	}
-
-	if interceptorChan == nil {
-		return errors.New("cannot receive subsequent messages: client must send message with an 'id' field for multi-message conversations")
-	}
-
-	select {
-	case message := <-interceptorChan:
-		err := c.unmarshalInboundMessage(message, into)
-		message.free()
+	msg, owned, err := c.receiveNextMessage(ctx)
+	if err != nil {
 		return err
-	case <-ctx.Done():
-		return fmt.Errorf("receive cancelled: %w", ctx.Err())
 	}
+	if owned {
+		defer msg.free()
+	}
+	return c.unmarshalInboundMessage(msg, into)
 }
 
 // Close closes the WebSocket connection with a normal closure status.
@@ -858,26 +745,6 @@ func (c *Context) CloseStatus() (Status, string, CloseSource) {
 	return c.socket.closeStatus, c.socket.closeReason, c.socket.closeStatusSource
 }
 
-func (c *Context) unmarshalInboundMessage(message *InboundMessage, into any) error {
-	c.mu.RLock()
-	unmarshaler := c.messageUnmarshaler
-	c.mu.RUnlock()
-	if unmarshaler == nil {
-		return errors.New("no message unmarshaller set. use SetMessageUnmarshaler or add message parser middleware")
-	}
-	return unmarshaler(message, into)
-}
-
-func (c *Context) marshallOutboundMessage(message *OutboundMessage) ([]byte, error) {
-	c.mu.RLock()
-	marshaller := c.messageMarshaller
-	c.mu.RUnlock()
-	if marshaller == nil {
-		return nil, errors.New("no message marshaller set. use SetMessageMarshaller() or add data encoder middleware")
-	}
-	return marshaller(message)
-}
-
 // Deadline returns the time when work done on behalf of this context should be
 // canceled. Returns ok==false when no deadline is set. Part of the context.Context
 // interface.
@@ -904,4 +771,132 @@ func (c *Context) Err() error {
 // message-level storage or GetFromSocket/SetOnSocket for connection-level storage.
 func (c *Context) Value(v any) any {
 	return c.ctx.Value(v)
+}
+
+// receiveNextMessage returns the next non-empty inbound message. On the first call
+// it checks the trigger message; subsequent calls block on the interceptor channel,
+// skipping nil or empty messages (e.g. from a closed channel or empty frames).
+// owned indicates whether the caller is responsible for freeing the returned message.
+func (c *Context) receiveNextMessage(ctx context.Context) (msg *InboundMessage, owned bool, err error) {
+	c.mu.Lock()
+	isFirstReceive := !c.firstReceiveDone
+	if isFirstReceive {
+		c.firstReceiveDone = true
+	}
+	triggerMsg := c.message
+	interceptorChan := c.interceptorChan
+	c.mu.Unlock()
+
+	if isFirstReceive && len(triggerMsg.Data) > 0 {
+		return triggerMsg, false, nil
+	}
+
+	if interceptorChan == nil {
+		return nil, false, errors.New("cannot receive subsequent messages: client must send message with an 'id' field for multi-message conversations")
+	}
+
+	for {
+		select {
+		case m := <-interceptorChan:
+			if m == nil || len(m.Data) == 0 {
+				if m != nil {
+					m.free()
+				}
+				continue
+			}
+			return m, true, nil
+		case <-ctx.Done():
+			return nil, false, fmt.Errorf("receive cancelled: %w", ctx.Err())
+		}
+	}
+}
+
+func (c *Context) free() {
+	c.cancelCtx()
+
+	// Clean up interceptor before freeing message (to avoid race on message.ID)
+	// Only clean up if this context owns the interceptor (created it)
+	if c.interceptorChan != nil && c.ownsInterceptor {
+		if c.socket != nil && c.message != nil {
+			c.socket.RemoveInterceptor(c.message.ID)
+		}
+		// Drain and free any buffered messages
+		for len(c.interceptorChan) > 0 {
+			msg := <-c.interceptorChan
+			msg.free()
+		}
+	}
+	c.interceptorChan = nil
+	c.ownsInterceptor = false
+
+	if c.message != nil {
+		c.message.free()
+	}
+
+	c.parentContext = nil
+
+	c.socket = nil
+	c.message = nil
+	c.messageType = 0
+
+	for k := range c.params {
+		delete(c.params, k)
+	}
+
+	c.Error = nil
+	c.ErrorStack = ""
+
+	c.messageUnmarshaler = nil
+	c.messageMarshaller = nil
+
+	c.currentHandlerNode = nil
+	c.currentHandlerNodeMatches = false
+	c.currentHandlerIndex = 0
+	c.currentHandler = nil
+	c.nextBeyondEnd = false
+
+	for k := range c.associatedValues {
+		delete(c.associatedValues, k)
+	}
+
+	c.firstReceiveDone = false
+
+	contextPool.Put(c)
+}
+
+func (c *Context) tryUpdateParent() {
+	if c.parentContext == nil {
+		return
+	}
+
+	c.parentContext.Error = c.Error
+	c.parentContext.ErrorStack = c.ErrorStack
+
+	for k, v := range c.associatedValues {
+		c.parentContext.associatedValues[k] = v
+	}
+}
+
+func (c *Context) unmarshalInboundMessage(message *InboundMessage, into any) error {
+	c.mu.RLock()
+	unmarshaler := c.messageUnmarshaler
+	c.mu.RUnlock()
+	if unmarshaler == nil {
+		return errors.New("no message unmarshaller set. use SetMessageUnmarshaler or add message parser middleware")
+	}
+	return unmarshaler(message, into)
+}
+
+func (c *Context) marshallOutboundMessage(message *OutboundMessage) ([]byte, error) {
+	c.mu.RLock()
+	marshaller := c.messageMarshaller
+	c.mu.RUnlock()
+	if marshaller == nil {
+		return nil, errors.New("no message marshaller set. use SetMessageMarshaller() or add data encoder middleware")
+	}
+	return marshaller(message)
+}
+
+func contextFromPool() *Context {
+	return contextPool.Get().(*Context)
 }

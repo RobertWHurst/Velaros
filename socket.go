@@ -131,6 +131,13 @@ func (s *Socket) Close(status Status, reason string, source CloseSource) {
 	s.closeReason = reason
 	s.closeStatusSource = source
 
+	s.interceptorsMx.Lock()
+	for id := range s.interceptors {
+		close(s.interceptors[id])
+		delete(s.interceptors, id)
+	}
+	s.interceptorsMx.Unlock()
+
 	s.cancelCtx()
 }
 
