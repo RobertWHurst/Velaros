@@ -1,11 +1,9 @@
 module github.com/RobertWHurst/velaros
 
-go 1.24.0
-
-toolchain go1.24.1
+go 1.25.0
 
 require (
-	github.com/RobertWHurst/navaros v1.21.0
+	github.com/RobertWHurst/navaros v1.22.0
 	github.com/coder/websocket v1.8.14
 	github.com/google/uuid v1.6.0
 	github.com/grafana/regexp v0.0.0-20250905093917-f7b3be9d1853
@@ -13,4 +11,7 @@ require (
 	google.golang.org/protobuf v1.36.10
 )
 
-require github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
+require (
+	github.com/stretchr/testify v1.11.1 // indirect
+	github.com/vmihailenco/tagparser/v2 v2.0.0 // indirect
+)
