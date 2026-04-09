@@ -61,8 +61,8 @@ type Context struct {
 	currentHandler  any
 	nextBeyondEnd   bool
 
-	interceptorChan  chan *InboundMessage
-	ownsInterceptor  bool
+	receiverChan     chan *InboundMessage
+	ownsReceiver     bool
 	firstReceiveDone bool
 
 	// Error holds any error that occurred during handler execution, including
@@ -153,8 +153,8 @@ func NewSubContextWithNode(ctx *Context, firstHandlerNode *HandlerNode) *Context
 		subCtx.associatedValues[k] = v
 	}
 
-	subCtx.interceptorChan = ctx.interceptorChan
-	subCtx.ownsInterceptor = false // Sub-contexts never own interceptors
+	subCtx.receiverChan = ctx.receiverChan
+	subCtx.ownsReceiver = false // Sub-contexts never own receivers
 	subCtx.firstReceiveDone = ctx.firstReceiveDone
 
 	subCtx.currentHandlerNode = firstHandlerNode
@@ -394,16 +394,38 @@ func (c *Context) SetMessageMarshaller(marshaller func(message *OutboundMessage)
 }
 
 // SetMessageID changes the ID of the current message. This affects routing
-// behavior - the framework will attempt to deliver this message to any registered
-// interceptor (from Request/RequestInto calls) matching this ID.
-// This method is safe for concurrent use.
+// behavior — if another message with this ID is already being processed, this
+// message will block until that message exits the handler chain (or calls
+// ReceiveInto, which signals readiness for the next message).
 //
-// This is primarily used by middleware to implement custom request/reply patterns.
+// Only messages where middleware explicitly calls SetMessageID participate in
+// message-ID locking. Messages without an explicit ID are never blocked.
+// This method is safe for concurrent use.
 func (c *Context) SetMessageID(id string) {
 	c.mu.Lock()
 	c.message.ID = id
 	c.message.hasSetID = true
 	c.mu.Unlock()
+
+	if c.socket == nil {
+		return
+	}
+	ch, isFirst := c.socket.acquireMessageIDLock(id)
+	if isFirst {
+		return
+	}
+	for {
+		select {
+		case <-ch:
+			var isFirst bool
+			ch, isFirst = c.socket.acquireMessageIDLock(id)
+			if isFirst {
+				return
+			}
+		case <-c.socket.Done():
+			return
+		}
+	}
 }
 
 // SetMessagePath changes the path of the current message. This affects routing
@@ -774,8 +796,9 @@ func (c *Context) Value(v any) any {
 }
 
 // receiveNextMessage returns the next non-empty inbound message. On the first call
-// it checks the trigger message; subsequent calls block on the interceptor channel,
-// skipping nil or empty messages (e.g. from a closed channel or empty frames).
+// it checks the trigger message; subsequent calls register a fresh receiver, release
+// the message-ID lock to unblock the next same-ID message, then block on the receiver
+// channel until that message is delivered.
 // owned indicates whether the caller is responsible for freeing the returned message.
 func (c *Context) receiveNextMessage(ctx context.Context) (msg *InboundMessage, owned bool, err error) {
 	c.mu.Lock()
@@ -784,24 +807,45 @@ func (c *Context) receiveNextMessage(ctx context.Context) (msg *InboundMessage, 
 		c.firstReceiveDone = true
 	}
 	triggerMsg := c.message
-	interceptorChan := c.interceptorChan
 	c.mu.Unlock()
 
 	if isFirstReceive && len(triggerMsg.Data) > 0 {
 		return triggerMsg, false, nil
 	}
 
-	if interceptorChan == nil {
+	if c.socket == nil {
+		return nil, false, ErrContextFreed
+	}
+
+	if !c.message.hasSetID {
 		return nil, false, errors.New("cannot receive subsequent messages: client must send message with an 'id' field for multi-message conversations")
 	}
 
+	// Register a fresh receiver and release the ID lock each iteration. The receiver
+	// is self-consuming (removed on delivery), so we must re-register after each empty
+	// message is skipped. Releasing the lock each time allows the next same-ID message
+	// into the chain — if it delivers empty data we loop and do it again.
 	for {
+		receiverChan := make(chan *InboundMessage, 1)
+		c.receiverChan = receiverChan
+		c.ownsReceiver = true
+		// currentHandlerIndex was incremented before this handler was invoked in Next(),
+		// so the currently-executing handler is at currentHandlerIndex-1.
+		c.socket.AddReceiver(c.message.ID, c.currentHandlerNode, c.currentHandlerIndex-1, receiverChan)
+
+		// Release the message-ID lock: wakes all goroutines waiting in SetMessageID for
+		// this ID. They race to acquire the next lock — one enters the chain, the rest
+		// re-queue behind it.
+		c.socket.releaseMessageIDLock(c.message.ID)
+
 		select {
-		case m := <-interceptorChan:
+		case m := <-receiverChan:
 			if m == nil || len(m.Data) == 0 {
 				if m != nil {
 					m.free()
 				}
+				// Empty message skipped — loop to re-register receiver and release lock
+				// so the next same-ID message can enter the chain.
 				continue
 			}
 			return m, true, nil
@@ -814,20 +858,20 @@ func (c *Context) receiveNextMessage(ctx context.Context) (msg *InboundMessage, 
 func (c *Context) free() {
 	c.cancelCtx()
 
-	// Clean up interceptor before freeing message (to avoid race on message.ID)
-	// Only clean up if this context owns the interceptor (created it)
-	if c.interceptorChan != nil && c.ownsInterceptor {
+	// Safety net: if a receiver was registered but never consumed (e.g. socket closed,
+	// handler returned early), remove it and drain any buffered message. This is a
+	// no-op if the receiver already self-consumed on delivery.
+	if c.receiverChan != nil && c.ownsReceiver {
 		if c.socket != nil && c.message != nil {
-			c.socket.RemoveInterceptor(c.message.ID)
+			c.socket.RemoveReceiver(c.message.ID)
 		}
-		// Drain and free any buffered messages
-		for len(c.interceptorChan) > 0 {
-			msg := <-c.interceptorChan
+		for len(c.receiverChan) > 0 {
+			msg := <-c.receiverChan
 			msg.free()
 		}
 	}
-	c.interceptorChan = nil
-	c.ownsInterceptor = false
+	c.receiverChan = nil
+	c.ownsReceiver = false
 
 	if c.message != nil {
 		c.message.free()

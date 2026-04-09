@@ -25,32 +25,6 @@ func (c *Context) Next() {
 		return
 	}
 
-	// Auto-create interceptor if message has an ID. The first message with a given ID
-	// creates the interceptor, subsequent messages with the same ID get intercepted.
-	if c.message.hasSetID {
-		interceptorChan, ok := c.socket.GetInterceptor(c.message.ID)
-		if !ok {
-			// First message with this ID - create interceptor
-			interceptorChan = make(chan *InboundMessage, 1)
-			c.interceptorChan = interceptorChan
-			c.ownsInterceptor = true
-			c.socket.AddInterceptor(c.message.ID, interceptorChan)
-			// Don't push message yet - it will be available via c.message for now
-		} else if c.interceptorChan == nil {
-			// Subsequent message with this ID - intercept it (unless this context owns the interceptor)
-			select {
-			case interceptorChan <- c.message:
-				c.message = nil // Prevent double-free
-				return
-			case <-c.socket.Done():
-				// Socket closed while trying to send - free message and continue
-				c.message.free()
-				return
-			}
-		}
-		c.message.hasSetID = false
-	}
-
 	// if the path was set, and have a matching node, make sure it still matches
 	// the path, otherwise clear it and move on to the next node.
 	if c.message.hasSetPath {
@@ -92,6 +66,22 @@ func (c *Context) Next() {
 		// the next time Next is called. We iterate through the handler functions
 		// until we have executed all of them.
 		if c.currentHandlerIndex < len(c.currentHandlerNode.Handlers) {
+			// If a receiver is registered at exactly this handler, deliver the message
+			// to it and return — the waiting ReceiveInto call on the owning context
+			// will receive it. Uses pre-increment index to match AddReceiver registration.
+			if c.message != nil && c.message.hasSetID && c.receiverChan == nil {
+				if receiverChan, ok := c.socket.GetReceiverForNode(c.message.ID, c.currentHandlerNode, c.currentHandlerIndex); ok {
+					c.socket.RemoveReceiver(c.message.ID)
+					select {
+					case receiverChan <- c.message:
+						c.message = nil
+					case <-c.socket.Done():
+						c.message.free()
+						c.message = nil
+					}
+					return
+				}
+			}
 			c.currentHandler = c.currentHandlerNode.Handlers[c.currentHandlerIndex]
 			c.currentHandlerIndex += 1
 			break
@@ -110,6 +100,11 @@ func (c *Context) Next() {
 	// the end of the chain, we can return early.
 	if c.currentHandler == nil {
 		c.nextBeyondEnd = true
+		// If a receiver was registered but this message reached end-of-chain without
+		// matching it, clean it up — receivers are only meant to intercept one message.
+		if c.message != nil && c.message.hasSetID && c.receiverChan == nil {
+			c.socket.RemoveReceiver(c.message.ID)
+		}
 		return
 	}
 

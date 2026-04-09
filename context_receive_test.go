@@ -3,6 +3,7 @@ package velaros_test
 import (
 	"encoding/json"
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -178,6 +179,113 @@ func TestReceive_ContextCancelUnblocksReceive(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("handler did not complete in time")
+	}
+
+	conn.Close(velaros.StatusNormalClosure, "done") //nolint
+}
+
+// TestReceive_RapidSameIDNoSimultaneousHandlers verifies that rapid same-ID messages
+// never run multiple handler instances simultaneously — the core race this fix addresses.
+func TestReceive_RapidSameIDNoSimultaneousHandlers(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+
+	var active int
+	var mu sync.Mutex
+	peaked := make(chan int, 10)
+
+	router.Bind("/rapid", func(ctx *velaros.Context) {
+		mu.Lock()
+		active++
+		if active > 1 {
+			peaked <- active
+		}
+		mu.Unlock()
+
+		defer func() {
+			mu.Lock()
+			active--
+			mu.Unlock()
+		}()
+
+		var msg testMessage
+		ctx.ReceiveInto(&msg) //nolint
+	})
+
+	conn := newMockConnection()
+	go router.HandleConnection(nil, conn)
+
+	send := func(id, path string, data any) {
+		msg := map[string]any{"id": id, "path": path}
+		if data != nil {
+			msg["data"] = data
+		}
+		raw, _ := json.Marshal(msg)
+		conn.sendIncoming(&velaros.SocketMessage{Type: velaros.MessageText, RawData: raw})
+	}
+
+	// Send trigger then multiple rapid same-ID same-path continuations
+	for i := 0; i < 5; i++ {
+		send("race-id", "/rapid", testMessage{Msg: fmt.Sprintf("msg-%d", i)})
+	}
+
+	// Give messages time to process
+	time.Sleep(200 * time.Millisecond)
+
+	// Verify no simultaneous handler instances
+	select {
+	case n := <-peaked:
+		t.Errorf("multiple simultaneous handler instances: %d at once", n)
+	default:
+		// expected: never more than one handler at a time
+	}
+
+	conn.Close(velaros.StatusNormalClosure, "done") //nolint
+}
+
+// TestReceive_SameIDDifferentPathBothHandled verifies that same-ID messages on
+// different paths both get handled (serialized, not dropped).
+func TestReceive_SameIDDifferentPathBothHandled(t *testing.T) {
+	router := velaros.NewRouter()
+	router.Use(jsonMiddleware.Middleware())
+
+	results := make(chan string, 4)
+
+	router.Bind("/first", func(ctx *velaros.Context) {
+		results <- "first"
+	})
+
+	router.Bind("/second", func(ctx *velaros.Context) {
+		results <- "second"
+	})
+
+	conn := newMockConnection()
+	go router.HandleConnection(nil, conn)
+
+	send := func(id, path string) {
+		raw, _ := json.Marshal(map[string]any{"id": id, "path": path})
+		conn.sendIncoming(&velaros.SocketMessage{Type: velaros.MessageText, RawData: raw})
+	}
+
+	send("shared-id", "/first")
+	send("shared-id", "/second")
+
+	// Both handlers should run (order is not guaranteed due to goroutine scheduling)
+	seen := map[string]bool{}
+	for i := 0; i < 2; i++ {
+		select {
+		case got := <-results:
+			seen[got] = true
+		case <-time.After(time.Second):
+			t.Fatalf("timed out waiting for handler (got so far: %v)", seen)
+		}
+	}
+
+	if !seen["first"] {
+		t.Error("expected /first handler to have run")
+	}
+	if !seen["second"] {
+		t.Error("expected /second handler to have run")
 	}
 
 	conn.Close(velaros.StatusNormalClosure, "done") //nolint
