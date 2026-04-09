@@ -44,6 +44,16 @@ type SocketConnection interface {
 	Close(status Status, reason string) error
 }
 
+// receiverEntry holds a registered receiver for a specific handler within a node.
+// Receivers are used for multi-message conversations: a handler registers a receiver
+// via ReceiveInto, and the next same-ID message is delivered to it at exactly this
+// node+handlerIndex rather than spawning a new handler instance.
+type receiverEntry struct {
+	node         *HandlerNode
+	handlerIndex int
+	ch           chan *InboundMessage
+}
+
 // Socket represents a WebSocket connection and manages its lifecycle, message
 // interception, and connection-level storage. It implements the context.Context
 // interface to support cancellation and deadlines.
@@ -55,14 +65,17 @@ type SocketConnection interface {
 // Key responsibilities:
 //   - Connection lifecycle management (open, close, done signaling)
 //   - Thread-safe connection-level value storage
-//   - Message interception for request/reply correlation
+//   - Message receiver registration for multi-message conversations
+//   - Message-ID locking to serialize same-ID messages through the handler chain
 //   - Access to original HTTP upgrade request headers
 type Socket struct {
 	id                 string
 	connectionInfo     *ConnectionInfo
 	connection         SocketConnection
-	interceptorsMx     sync.Mutex
-	interceptors       map[string]chan *InboundMessage
+	receiversMx        sync.Mutex
+	receivers          map[string]*receiverEntry
+	messageIDLocksMx   sync.Mutex
+	messageIDLocks     map[string]chan struct{}
 	associatedValuesMx sync.RWMutex
 	associatedValues   map[string]any
 	closeMu            sync.Mutex
@@ -81,10 +94,11 @@ var _ context.Context = &Socket{}
 // generated and the done channel is initialized.
 func NewSocket(info *ConnectionInfo, conn SocketConnection) *Socket {
 	s := &Socket{
-		id:               uuid.NewString(),
-		connectionInfo:   info,
-		connection:       conn,
-		interceptors:     map[string]chan *InboundMessage{},
+		id:             uuid.NewString(),
+		connectionInfo: info,
+		connection:     conn,
+		receivers:      map[string]*receiverEntry{},
+		messageIDLocks: map[string]chan struct{}{},
 		associatedValues: map[string]any{},
 	}
 	s.ctx, s.cancelCtx = context.WithCancel(context.Background())
@@ -131,12 +145,16 @@ func (s *Socket) Close(status Status, reason string, source CloseSource) {
 	s.closeReason = reason
 	s.closeStatusSource = source
 
-	s.interceptorsMx.Lock()
-	for id := range s.interceptors {
-		close(s.interceptors[id])
-		delete(s.interceptors, id)
+	s.receiversMx.Lock()
+	for id := range s.receivers {
+		close(s.receivers[id].ch)
+		delete(s.receivers, id)
 	}
-	s.interceptorsMx.Unlock()
+	s.receiversMx.Unlock()
+
+	s.messageIDLocksMx.Lock()
+	s.messageIDLocks = map[string]chan struct{}{}
+	s.messageIDLocksMx.Unlock()
 
 	s.cancelCtx()
 }
@@ -235,6 +253,9 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 
 		ctx := NewContextWithNodeAndMessageType(s, inboundMsg, node, msg.Type)
 		ctx.Next()
+		if ctx.message != nil && ctx.message.hasSetID {
+			s.releaseMessageIDLock(ctx.message.ID)
+		}
 		ctx.free()
 	}()
 
@@ -257,34 +278,73 @@ func (s *Socket) HandleClose(node *HandlerNode) {
 	closeCtx.free()
 }
 
-// GetInterceptor retrieves the interceptor channel for a given message ID.
-// Interceptors are used for request/reply correlation and multi-message conversations.
-// Returns the channel and true if found. This is an internal method.
-func (s *Socket) GetInterceptor(id string) (chan *InboundMessage, bool) {
-	s.interceptorsMx.Lock()
-	defer s.interceptorsMx.Unlock()
+// GetReceiverForNode retrieves the receiver channel for a given message ID, but only
+// if the registered receiver matches the given node pointer and handler index. This
+// ensures same-ID continuation messages are only consumed at the exact handler that
+// registered the receiver, allowing middleware on earlier nodes to still run.
+func (s *Socket) GetReceiverForNode(id string, node *HandlerNode, handlerIndex int) (chan *InboundMessage, bool) {
+	s.receiversMx.Lock()
+	defer s.receiversMx.Unlock()
 
-	interceptorChan, ok := s.interceptors[id]
-	return interceptorChan, ok
+	entry, ok := s.receivers[id]
+	if !ok || entry.node != node || entry.handlerIndex != handlerIndex {
+		return nil, false
+	}
+	return entry.ch, true
 }
 
-// AddInterceptor registers an interceptor channel for a given message ID. Messages
-// arriving with this ID will be sent to the channel instead of following normal routing.
-// This is an internal method used by the Request/Receive API.
-func (s *Socket) AddInterceptor(id string, interceptorChan chan *InboundMessage) {
-	s.interceptorsMx.Lock()
-	defer s.interceptorsMx.Unlock()
+// AddReceiver registers a receiver for a given message ID at a specific handler node
+// and index. The next same-ID message will be delivered to this receiver rather than
+// invoking the handler again. Receivers are self-consuming: they are removed from
+// the map upon delivery.
+func (s *Socket) AddReceiver(id string, node *HandlerNode, handlerIndex int, ch chan *InboundMessage) {
+	s.receiversMx.Lock()
+	defer s.receiversMx.Unlock()
 
-	s.interceptors[id] = interceptorChan
+	s.receivers[id] = &receiverEntry{node: node, handlerIndex: handlerIndex, ch: ch}
 }
 
-// RemoveInterceptor unregisters the interceptor channel for a given message ID.
-// This is an internal method that cleans up interceptors when contexts are freed.
-func (s *Socket) RemoveInterceptor(id string) {
-	s.interceptorsMx.Lock()
-	defer s.interceptorsMx.Unlock()
+// RemoveReceiver unregisters the receiver for a given message ID. This is a no-op
+// if no receiver is registered. Used both for self-consuming delivery cleanup and
+// as a safety net in Context.free().
+func (s *Socket) RemoveReceiver(id string) {
+	s.receiversMx.Lock()
+	defer s.receiversMx.Unlock()
 
-	delete(s.interceptors, id)
+	delete(s.receivers, id)
+}
+
+// acquireMessageIDLock atomically checks whether a message with the given ID is
+// already being processed. If not, it creates a new lock channel, stores it, and
+// returns (ch, true) — the caller is first and proceeds without blocking. If a lock
+// already exists, it returns (ch, false) — the caller must block on <-ch and retry.
+func (s *Socket) acquireMessageIDLock(id string) (chan struct{}, bool) {
+	s.messageIDLocksMx.Lock()
+	defer s.messageIDLocksMx.Unlock()
+
+	if ch, ok := s.messageIDLocks[id]; ok {
+		return ch, false
+	}
+	ch := make(chan struct{})
+	s.messageIDLocks[id] = ch
+	return ch, true
+}
+
+// releaseMessageIDLock releases the lock for the given message ID. It deletes the
+// entry from the map and closes the channel, which wakes all goroutines waiting in
+// SetMessageID. Those goroutines retry acquireMessageIDLock and race to become the
+// next active message. If there are no waiters, close is a no-op and the entry is
+// simply gone.
+func (s *Socket) releaseMessageIDLock(id string) {
+	s.messageIDLocksMx.Lock()
+	ch, ok := s.messageIDLocks[id]
+	if ok {
+		delete(s.messageIDLocks, id)
+	}
+	s.messageIDLocksMx.Unlock()
+	if ok {
+		close(ch)
+	}
 }
 
 // Deadline returns the time when work done on behalf of this socket's context should

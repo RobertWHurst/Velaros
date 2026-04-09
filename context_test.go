@@ -666,7 +666,7 @@ func TestContextRequest(t *testing.T) {
 
 	writeMessage(t, conn, ctx, "req-123", "/requester", nil)
 
-	// First message is the Request to /echo
+	// First message is the Request sent by the handler to the client
 	id1, msg1 := readMessage(t, conn, ctx)
 	if id1 != "req-123" {
 		t.Errorf("expected ID %q, got %q", "req-123", id1)
@@ -675,8 +675,8 @@ func TestContextRequest(t *testing.T) {
 		t.Errorf("expected 'hello', got %q", msg1.Msg)
 	}
 
-	// Send the echo response back
-	writeMessage(t, conn, ctx, id1, "/echo", testMessage{Msg: "echo: hello"})
+	// Send the response back on the same path so the receiver can catch it
+	writeMessage(t, conn, ctx, id1, "/requester", testMessage{Msg: "echo: hello"})
 
 	// Read final response
 	_, response := readMessage(t, conn, ctx)
@@ -723,7 +723,7 @@ func TestContextRequestInto(t *testing.T) {
 
 	writeMessage(t, conn, ctx, "req-456", "/requester", nil)
 
-	// First message is the Request to /echo
+	// First message is the Request sent by the handler to the client
 	id1, msg1 := readMessage(t, conn, ctx)
 	if id1 != "req-456" {
 		t.Errorf("expected ID %q, got %q", "req-456", id1)
@@ -732,8 +732,8 @@ func TestContextRequestInto(t *testing.T) {
 		t.Errorf("expected 'world', got %q", msg1.Msg)
 	}
 
-	// Send the echo response back
-	writeMessage(t, conn, ctx, id1, "/echo", testMessage{Msg: "echo: world"})
+	// Send the response back on the same path so the receiver can catch it
+	writeMessage(t, conn, ctx, id1, "/requester", testMessage{Msg: "echo: world"})
 
 	// Read final response
 	_, response := readMessage(t, conn, ctx)

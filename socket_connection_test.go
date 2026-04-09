@@ -271,6 +271,11 @@ func TestCustomConnection_RepeatedConversationIDsAccumulateReceiveWaitersOnSingl
 		t.Fatalf("expected %d concurrent conversations on one socket, got %d", conversations, len(seen))
 	}
 
+	// Give goroutines time to reach their blocking point in ReceiveInto.
+	// Each goroutine registers a receiver and releases the ID lock before blocking,
+	// so a brief yield ensures all have reached the select before profile capture.
+	time.Sleep(50 * time.Millisecond)
+
 	var goroutines bytes.Buffer
 	if err := pprof.Lookup("goroutine").WriteTo(&goroutines, 1); err != nil {
 		t.Fatalf("failed to capture goroutine profile: %v", err)
