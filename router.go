@@ -123,7 +123,7 @@ func (r *Router) Handle(ctx *Context) {
 	subCtx := NewSubContextWithNode(ctx, r.firstHandlerNode)
 	subCtx.Next()
 	nextBeyondEnd := subCtx.nextBeyondEnd
-	subCtx.free()
+	subCtx.finalize()
 	if nextBeyondEnd {
 		ctx.Next()
 	}
@@ -136,7 +136,7 @@ func (r *Router) HandleOpen(ctx *Context) {
 	subCtx := NewSubContextWithNode(ctx, r.firstOpenHandlerNode)
 	subCtx.Next()
 	nextBeyondEnd := subCtx.nextBeyondEnd
-	subCtx.free()
+	subCtx.finalize()
 	if nextBeyondEnd {
 		ctx.Next()
 	}
@@ -149,7 +149,7 @@ func (r *Router) HandleClose(ctx *Context) {
 	subCtx := NewSubContextWithNode(ctx, r.firstCloseHandlerNode)
 	subCtx.Next()
 	nextBeyondEnd := subCtx.nextBeyondEnd
-	subCtx.free()
+	subCtx.finalize()
 	if nextBeyondEnd {
 		ctx.Next()
 	}

@@ -1,6 +1,5 @@
 package velaros
 
-import "sync"
 
 // InboundMessage represents a message received from a WebSocket client.
 // The structure and interpretation of these fields depends on the middleware
@@ -42,26 +41,8 @@ type InboundMessage struct {
 	Meta map[string]any
 }
 
-var inboundMessagePool = sync.Pool{
-	New: func() any {
-		return &InboundMessage{}
-	},
-}
-
 func inboundMessageFromPool() *InboundMessage {
-	msg := inboundMessagePool.Get().(*InboundMessage)
-	msg.hasSetID = false
-	msg.hasSetPath = false
-	msg.ID = ""
-	msg.Path = ""
-	msg.RawData = nil
-	msg.Data = nil
-	msg.Meta = nil
-	return msg
-}
-
-func (m *InboundMessage) free() {
-	inboundMessagePool.Put(m)
+	return &InboundMessage{}
 }
 
 // OutboundMessage represents a message being sent to a WebSocket client.

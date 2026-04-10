@@ -85,6 +85,7 @@ type Socket struct {
 	closeReason        string
 	ctx                context.Context
 	cancelCtx          context.CancelFunc
+
 }
 
 var _ context.Context = &Socket{}
@@ -256,7 +257,7 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 		if ctx.message != nil && ctx.message.hasSetID {
 			s.releaseMessageIDLock(ctx.message.ID)
 		}
-		ctx.free()
+		ctx.finalize()
 	}()
 
 	return true
@@ -267,7 +268,7 @@ func (s *Socket) HandleNextMessageWithNode(node *HandlerNode) bool {
 func (s *Socket) HandleOpen(node *HandlerNode) {
 	openCtx := NewContextWithNode(s, inboundMessageFromPool(), node)
 	openCtx.Next()
-	openCtx.free()
+	openCtx.finalize()
 }
 
 // HandleClose executes the close lifecycle handlers starting at the given node.
@@ -275,7 +276,7 @@ func (s *Socket) HandleOpen(node *HandlerNode) {
 func (s *Socket) HandleClose(node *HandlerNode) {
 	closeCtx := NewContextWithNode(s, inboundMessageFromPool(), node)
 	closeCtx.Next()
-	closeCtx.free()
+	closeCtx.finalize()
 }
 
 // GetReceiverForNode retrieves the receiver channel for a given message ID, but only
@@ -306,7 +307,7 @@ func (s *Socket) AddReceiver(id string, node *HandlerNode, handlerIndex int, ch 
 
 // RemoveReceiver unregisters the receiver for a given message ID. This is a no-op
 // if no receiver is registered. Used both for self-consuming delivery cleanup and
-// as a safety net in Context.free().
+// as a safety net in Context.cancelCtx().
 func (s *Socket) RemoveReceiver(id string) {
 	s.receiversMx.Lock()
 	defer s.receiversMx.Unlock()

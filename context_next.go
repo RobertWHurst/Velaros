@@ -78,7 +78,6 @@ func (c *Context) Next() {
 					case receiverChan <- c.message:
 						c.message = nil
 					case <-c.socket.Done():
-						c.message.free()
 						c.message = nil
 					}
 					return

@@ -11,7 +11,7 @@ func CtxSocket(ctx *Context) *Socket {
 // This function is for frameworks to be able to free Contexts they create
 // and shouldn't be used in most cases.
 func CtxFree(ctx *Context) {
-	ctx.free()
+	ctx.finalize()
 }
 
 // CtxMeta returns the message meta from the context.

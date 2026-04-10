@@ -162,14 +162,6 @@ func NewSubContextWithNode(ctx *Context, firstHandlerNode *HandlerNode) *Context
 	return subCtx
 }
 
-var contextPool = sync.Pool{
-	New: func() any {
-		return &Context{
-			params:           MessageParams{},
-			associatedValues: map[string]any{},
-		}
-	},
-}
 
 // SetOnSocket stores a value at the socket/connection level. Values stored
 // here persist across all messages for the duration of the WebSocket connection.
@@ -649,12 +641,9 @@ func (c *Context) ReceiveWithContext(ctx context.Context) ([]byte, error) {
 	if c.socket == nil {
 		return nil, ErrContextFreed
 	}
-	msg, owned, err := c.receiveNextMessage(ctx)
+	msg, err := c.receiveNextMessage(ctx)
 	if err != nil {
 		return nil, err
-	}
-	if owned {
-		defer msg.free()
 	}
 	return msg.Data, nil
 }
@@ -700,12 +689,9 @@ func (c *Context) ReceiveIntoWithContext(ctx context.Context, into any) error {
 		return ErrContextFreed
 	}
 
-	msg, owned, err := c.receiveNextMessage(ctx)
+	msg, err := c.receiveNextMessage(ctx)
 	if err != nil {
 		return err
-	}
-	if owned {
-		defer msg.free()
 	}
 	return c.unmarshalInboundMessage(msg, into)
 }
@@ -799,8 +785,7 @@ func (c *Context) Value(v any) any {
 // it checks the trigger message; subsequent calls register a fresh receiver, release
 // the message-ID lock to unblock the next same-ID message, then block on the receiver
 // channel until that message is delivered.
-// owned indicates whether the caller is responsible for freeing the returned message.
-func (c *Context) receiveNextMessage(ctx context.Context) (msg *InboundMessage, owned bool, err error) {
+func (c *Context) receiveNextMessage(ctx context.Context) (*InboundMessage, error) {
 	c.mu.Lock()
 	isFirstReceive := !c.firstReceiveDone
 	if isFirstReceive {
@@ -810,15 +795,15 @@ func (c *Context) receiveNextMessage(ctx context.Context) (msg *InboundMessage, 
 	c.mu.Unlock()
 
 	if isFirstReceive && len(triggerMsg.Data) > 0 {
-		return triggerMsg, false, nil
+		return triggerMsg, nil
 	}
 
 	if c.socket == nil {
-		return nil, false, ErrContextFreed
+		return nil, ErrContextFreed
 	}
 
 	if !c.message.hasSetID {
-		return nil, false, errors.New("cannot receive subsequent messages: client must send message with an 'id' field for multi-message conversations")
+		return nil, errors.New("cannot receive subsequent messages: client must send message with an 'id' field for multi-message conversations")
 	}
 
 	// Register a fresh receiver and release the ID lock each iteration. The receiver
@@ -841,21 +826,19 @@ func (c *Context) receiveNextMessage(ctx context.Context) (msg *InboundMessage, 
 		select {
 		case m := <-receiverChan:
 			if m == nil || len(m.Data) == 0 {
-				if m != nil {
-					m.free()
-				}
 				// Empty message skipped — loop to re-register receiver and release lock
 				// so the next same-ID message can enter the chain.
 				continue
 			}
-			return m, true, nil
+			return m, nil
 		case <-ctx.Done():
-			return nil, false, fmt.Errorf("receive cancelled: %w", ctx.Err())
+			return nil, fmt.Errorf("receive cancelled: %w", ctx.Err())
 		}
 	}
 }
 
-func (c *Context) free() {
+
+func (c *Context) finalize() {
 	c.cancelCtx()
 
 	// Safety net: if a receiver was registered but never consumed (e.g. socket closed,
@@ -866,46 +849,9 @@ func (c *Context) free() {
 			c.socket.RemoveReceiver(c.message.ID)
 		}
 		for len(c.receiverChan) > 0 {
-			msg := <-c.receiverChan
-			msg.free()
+			<-c.receiverChan
 		}
 	}
-	c.receiverChan = nil
-	c.ownsReceiver = false
-
-	if c.message != nil {
-		c.message.free()
-	}
-
-	c.parentContext = nil
-
-	c.socket = nil
-	c.message = nil
-	c.messageType = 0
-
-	for k := range c.params {
-		delete(c.params, k)
-	}
-
-	c.Error = nil
-	c.ErrorStack = ""
-
-	c.messageUnmarshaler = nil
-	c.messageMarshaller = nil
-
-	c.currentHandlerNode = nil
-	c.currentHandlerNodeMatches = false
-	c.currentHandlerIndex = 0
-	c.currentHandler = nil
-	c.nextBeyondEnd = false
-
-	for k := range c.associatedValues {
-		delete(c.associatedValues, k)
-	}
-
-	c.firstReceiveDone = false
-
-	contextPool.Put(c)
 }
 
 func (c *Context) tryUpdateParent() {
@@ -942,5 +888,8 @@ func (c *Context) marshallOutboundMessage(message *OutboundMessage) ([]byte, err
 }
 
 func contextFromPool() *Context {
-	return contextPool.Get().(*Context)
+	return &Context{
+		params:           MessageParams{},
+		associatedValues: map[string]any{},
+	}
 }

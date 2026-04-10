@@ -190,7 +190,7 @@ func BenchmarkConcurrentConnections(b *testing.B) {
 	})
 }
 
-func BenchmarkContextPooling(b *testing.B) {
+func BenchmarkMessageDispatch(b *testing.B) {
 	router, server := setupRouter()
 	defer server.Close()
 
