@@ -19,9 +19,11 @@ func (c *Context) Next() {
 	defer c.tryUpdateParent()
 
 	// For BindClose handlers, we don't want to check if the socket is closed
-	// since they're meant to run during the close process
+	// since they're meant to run during the close process. Errors also must not
+	// abort close handlers — cleanup handlers (e.g. gateway.HandleClose) must
+	// always run regardless of earlier handler failures.
 	isCloseHandler := c.currentHandlerNode != nil && c.currentHandlerNode.BindType == CloseBindType
-	if c.Error != nil || (!isCloseHandler && c.socket.IsClosed()) {
+	if !isCloseHandler && (c.Error != nil || c.socket.IsClosed()) {
 		return
 	}
 
