@@ -1,9 +1,11 @@
 package velaros
 
 import (
+	"context"
 	"net/http"
 	"reflect"
 	"strings"
+	"time"
 
 	"github.com/coder/websocket"
 
@@ -27,6 +29,8 @@ type Router struct {
 	lastCloseHandlerNode  *HandlerNode
 	origins               []string
 	maxReadMessageSize    int64
+	pingInterval          time.Duration
+	pingTimeout           time.Duration
 }
 
 var _ http.Handler = &Router{}
@@ -45,6 +49,30 @@ func NewRouter() *Router {
 // the coder/websocket library default of 32768 bytes is used.
 func (r *Router) SetMaxReadMessageSize(n int64) {
 	r.maxReadMessageSize = n
+}
+
+// SetPingInterval enables application-level liveness checks via WebSocket
+// PING/PONG frames. When > 0, the router sends a PING every interval and
+// closes connections whose peer fails to respond within SetPingTimeout.
+//
+// This exists because TCP keepalives are too slow to detect silently-dead
+// peers (Linux defaults: keepalives off; tcp_retries2 timeout ~15 minutes).
+// A short application-level check catches devices that hard-rebooted without
+// a graceful close, releasing resources and firing UseClose handlers within
+// seconds rather than minutes.
+//
+// Only effective when the SocketConnection implements Pinger. The default
+// WebSocketConnection does. Set to 0 (default) to disable.
+func (r *Router) SetPingInterval(d time.Duration) {
+	r.pingInterval = d
+}
+
+// SetPingTimeout configures how long to wait for a PONG before declaring the
+// connection dead. If 0 (default), falls back to SetPingInterval.
+//
+// Has no effect unless SetPingInterval is also set.
+func (r *Router) SetPingTimeout(d time.Duration) {
+	r.pingTimeout = d
 }
 
 // SetOrigins configures the allowed origin patterns for WebSocket connections.
@@ -105,6 +133,16 @@ type ConnectionInfo struct {
 func (r *Router) HandleConnection(info *ConnectionInfo, connection SocketConnection) {
 	socket := NewSocket(info, connection)
 
+	// Application-level liveness check. Only kicks in when explicitly
+	// configured (SetPingInterval > 0) and the connection can ping its peer.
+	if r.pingInterval > 0 {
+		if pinger, ok := connection.(Pinger); ok {
+			stop := make(chan struct{})
+			defer close(stop)
+			go r.runPingLoop(stop, pinger, socket)
+		}
+	}
+
 	socket.HandleOpen(r.firstOpenHandlerNode)
 	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
 	}
@@ -114,6 +152,33 @@ func (r *Router) HandleConnection(info *ConnectionInfo, connection SocketConnect
 	defer socket.closeMu.Unlock()
 
 	_ = connection.Close(socket.closeStatus, socket.closeReason)
+}
+
+// runPingLoop sends a PING every r.pingInterval and waits up to r.pingTimeout
+// for the PONG. On failure it closes the socket with StatusGoingAway, which
+// cancels the read context and causes the message loop in HandleConnection to
+// exit normally — UseClose handlers run as if the peer disconnected.
+func (r *Router) runPingLoop(stop <-chan struct{}, pinger Pinger, socket *Socket) {
+	timeout := r.pingTimeout
+	if timeout <= 0 {
+		timeout = r.pingInterval
+	}
+	ticker := time.NewTicker(r.pingInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-stop:
+			return
+		case <-ticker.C:
+			ctx, cancel := context.WithTimeout(context.Background(), timeout)
+			err := pinger.Ping(ctx)
+			cancel()
+			if err != nil {
+				socket.Close(StatusGoingAway, "ping timeout", ServerCloseSource)
+				return
+			}
+		}
+	}
 }
 
 // Handle implements the Handler interface, allowing the router to be used as
@@ -460,15 +525,7 @@ func (r *Router) handleWebsocketConnection(res http.ResponseWriter, req *http.Re
 		RemoteAddr: req.RemoteAddr,
 		Headers:    req.Header,
 	}
-	socket := NewSocket(info, NewWebSocketConnection(conn))
-
-	socket.HandleOpen(r.firstOpenHandlerNode)
-	for socket.HandleNextMessageWithNode(r.firstHandlerNode) {
-	}
-	socket.HandleClose(r.firstCloseHandlerNode)
-
-	socket.closeMu.Lock()
-	defer socket.closeMu.Unlock()
-
-	_ = conn.Close(socket.closeStatus, socket.closeReason)
+	// Delegating to HandleConnection keeps the lifecycle (including the ping
+	// loop, when configured) in one place.
+	r.HandleConnection(info, NewWebSocketConnection(conn))
 }
