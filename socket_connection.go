@@ -48,3 +48,24 @@ func (c *WebSocketConnection) Write(ctx context.Context, msg *SocketMessage) err
 func (c *WebSocketConnection) Close(status Status, reason string) error {
 	return c.webSocketConnection.Close(websocket.StatusCode(status), reason)
 }
+
+// Ping sends a WebSocket-protocol PING frame and blocks until the peer's
+// PONG arrives or ctx expires. Implements Pinger so the router can run
+// application-level liveness checks (see Router.SetPingInterval).
+//
+// Underlying library auto-filters PING/PONG frames, so callers of Read never
+// see them.
+func (c *WebSocketConnection) Ping(ctx context.Context) error {
+	return c.webSocketConnection.Ping(ctx)
+}
+
+// Pinger is an optional extension to SocketConnection. Connection
+// implementations that can send a ping frame and observe the peer's pong
+// should implement it to opt in to Router-driven liveness checks.
+//
+// The standard WebSocketConnection implements this. Custom SocketConnection
+// implementations may omit it (in which case the router skips the ping loop
+// for those connections).
+type Pinger interface {
+	Ping(ctx context.Context) error
+}
