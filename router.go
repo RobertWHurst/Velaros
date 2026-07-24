@@ -419,6 +419,25 @@ func (r *Router) bind(isPublic bool, path string, handlers ...any) {
 		panic("no handlers provided")
 	}
 
+	// Extract route options before handler validation. Options do not
+	// participate in the handler chain.
+	var metadata any
+	filteredHandlers := make([]any, 0, len(handlers))
+	for _, handler := range handlers {
+		if option, ok := handler.(RouteOption); ok {
+			if metadataOption, ok := option.(MetadataOption); ok {
+				metadata = metadataOption.value
+			}
+			continue
+		}
+		filteredHandlers = append(filteredHandlers, handler)
+	}
+	handlers = filteredHandlers
+
+	if len(handlers) == 0 {
+		panic("no handlers provided")
+	}
+
 	for _, handler := range handlers {
 		if _, ok := handler.(Handler); ok {
 			continue
@@ -438,7 +457,7 @@ func (r *Router) bind(isPublic bool, path string, handlers ...any) {
 	}
 
 	if isPublic {
-		r.addRouteDescriptor(pattern)
+		r.addRouteDescriptor(pattern, metadata)
 	}
 
 	for _, handler := range handlers {
@@ -463,7 +482,7 @@ func (r *Router) bind(isPublic bool, path string, handlers ...any) {
 				if err != nil {
 					panic("invalid route pattern \"" + mountPath + routeDescriptor.Pattern.String() + "\": " + err.Error())
 				}
-				r.addRouteDescriptor(subPattern)
+				r.addRouteDescriptor(subPattern, routeDescriptor.Metadata)
 			}
 		}
 	}
@@ -483,7 +502,7 @@ func (r *Router) bind(isPublic bool, path string, handlers ...any) {
 	}
 }
 
-func (r *Router) addRouteDescriptor(pattern *Pattern) {
+func (r *Router) addRouteDescriptor(pattern *Pattern, metadata any) {
 	path := pattern.String()
 	if r.routeDescriptorMap == nil {
 		r.routeDescriptorMap = map[string]bool{}
@@ -496,7 +515,8 @@ func (r *Router) addRouteDescriptor(pattern *Pattern) {
 	}
 	r.routeDescriptorMap[path] = true
 	r.routeDescriptors = append(r.routeDescriptors, &RouteDescriptor{
-		Pattern: pattern,
+		Pattern:  pattern,
+		Metadata: metadata,
 	})
 }
 
